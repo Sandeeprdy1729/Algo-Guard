@@ -1,0 +1,35 @@
+version: '3.9'
+
+# Local docker-compose so anyone can boot the full stack with:
+#   docker compose up --build
+#
+# Requires:
+#   - apps/server/.env with DATABASE_URL pointing to your Supabase pooler
+#   - apps/ai-service/.env with ANTHROPIC_API_KEY
+#   - AVM_ADDRESS set in server env
+
+services:
+  ai-service:
+    build: ./apps/ai-service
+    env_file: ./apps/ai-service/.env
+    ports:
+      - "8000:8000"
+
+  server:
+    build: ./apps/server
+    env_file: ./apps/server/.env
+    environment:
+      AI_SERVICE_URL: http://ai-service:8000
+    ports:
+      - "4021:4021"
+    depends_on:
+      - ai-service
+
+  dashboard:
+    build: ./apps/dashboard
+    environment:
+      AGENTGUARD_SERVER: http://server:4021
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server

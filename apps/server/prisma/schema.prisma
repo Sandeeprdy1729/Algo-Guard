@@ -1,0 +1,117 @@
+// AgentGuard database schema.
+//
+// The Algorand policy contract is the source of truth. This schema is
+// a read-index — every row can be reconstructed from the chain.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id               String   @id @default(uuid()) @db.Uuid
+  email            String   @unique
+  orgName          String?
+  algoAdminAddress String
+  createdAt        DateTime @default(now())
+  agents           Agent[]
+}
+
+model Agent {
+  id           String        @id @default(uuid()) @db.Uuid
+  userId       String        @db.Uuid
+  name         String
+  algoAddress  String        @unique
+  status       AgentStatus   @default(active)
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy       Policy?
+  transactions Transaction[]
+
+  @@index([userId])
+}
+
+enum AgentStatus {
+  active
+  frozen
+}
+
+model Policy {
+  id                        String   @id @default(uuid()) @db.Uuid
+  agentId                   String   @unique @db.Uuid
+  dailyCapMicroUsdc         BigInt
+  monthlyCapMicroUsdc       BigInt
+  humanThresholdMicroUsdc   BigInt
+  allowedRoutes             String[]
+  riskThreshold             Int      @default(70)
+  updatedTxnId              String?
+  updatedAt                 DateTime @updatedAt
+  agent                     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id                String            @id @default(uuid()) @db.Uuid
+  agentId           String            @db.Uuid
+  route             String
+  amountMicroUsdc   BigInt
+  status            TransactionStatus
+  riskScore         Int?
+  riskReason        String?
+  algoGroupId       String?
+  algoTxnId         String?
+  latencyMs         Int?
+  createdAt         DateTime          @default(now())
+  settledAt         DateTime?
+  agent             Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  approval          Approval?
+
+  @@index([agentId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+enum TransactionStatus {
+  allowed
+  blocked_policy
+  blocked_risk
+  escalated
+  settled
+  reverted
+}
+
+model Approval {
+  id              String         @id @default(uuid()) @db.Uuid
+  transactionId   String         @unique @db.Uuid
+  intentAppTxn    String?
+  status          ApprovalStatus @default(pending)
+  approverAddress String?
+  approvalTxnId   String?
+  expiresAt       DateTime
+  decidedAt       DateTime?
+  createdAt       DateTime       @default(now())
+  transaction     Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  denied
+  expired
+}
+
+model AuditLog {
+  id            BigInt   @id @default(autoincrement())
+  round         BigInt
+  algoTxnId     String?  @unique
+  eventType     String
+  agentAddress  String?
+  payload       Json
+  createdAt     DateTime @default(now())
+
+  @@index([agentAddress, createdAt(sort: Desc)])
+}

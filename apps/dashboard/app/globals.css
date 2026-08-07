@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0b0f14;
+  color: #e6ecf2;
+}
+
+::selection {
+  background: #00d4a4;
+  color: #0b0f14;
+}
+
+.card {
+  @apply bg-surface border border-border rounded-lg;
+}
+
+.pill {
+  @apply px-2 py-0.5 text-xs rounded-full border;
+}

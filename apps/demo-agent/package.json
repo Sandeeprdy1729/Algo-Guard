@@ -1,0 +1,27 @@
+{
+  "name": "@agentguard/demo-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scripted x402 client agent — drives the AgentGuard live demo.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "happy": "tsx src/index.ts happy",
+    "risky": "tsx src/index.ts risky",
+    "escalate": "tsx src/index.ts escalate"
+  },
+  "dependencies": {
+    "@x402/avm": "^2.12.0",
+    "@x402/core": "^2.12.0",
+    "@x402/fetch": "^2.12.0",
+    "algosdk": "^3.0.0",
+    "bip39": "^3.1.0",
+    "dotenv": "^17.4.2",
+    "ed25519-hd-key": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.6.3"
+  }
+}

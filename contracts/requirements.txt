@@ -1,0 +1,8 @@
+algokit-utils>=3.0.0
+pyteal>=0.26.0
+py-algorand-sdk>=2.6.1
+python-dotenv>=1.0
+# BIP-39 / SLIP-0010 ed25519 for Pera Universal Wallet mnemonics.
+# Legacy 25-word mnemonics don't need this — the import is lazy — but
+# every environment installs it so the flow works out of the box.
+bip-utils>=2.9.0

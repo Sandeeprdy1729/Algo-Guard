@@ -1,0 +1,30 @@
+{
+  "name": "agentguard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AgentGuard — Programmable Treasury & Policy Layer for AI Agents",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "server:dev": "npm --prefix apps/server run dev",
+    "server:test": "npm --prefix apps/server test",
+    "server:test:all": "npm --prefix apps/server run test:all",
+    "server:build": "npm --prefix apps/server run build",
+    "dashboard:dev": "npm --prefix apps/dashboard run dev",
+    "dashboard:build": "npm --prefix apps/dashboard run build",
+    "ai:dev": "cd apps/ai-service && python -m uvicorn main:app --reload --port 8000",
+    "ai:test": "cd apps/ai-service && python -m pytest test_service.py -q",
+    "agent:demo": "npm --prefix apps/demo-agent start",
+    "contract:compile": "python contracts/policy_contract.py",
+    "contract:test": "python -m pytest contracts/tests -q",
+    "typecheck": "npm --prefix apps/server run build && npm --prefix apps/dashboard run build && npm --prefix apps/demo-agent exec -- tsc --noEmit && npm --prefix packages/policy-sdk exec -- tsc --noEmit",
+    "prisma:generate": "npm --prefix apps/server run prisma:generate",
+    "prisma:push": "npm --prefix apps/server run prisma:push"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=9"
+  }
+}
