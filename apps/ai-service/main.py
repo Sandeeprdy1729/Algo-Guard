@@ -1,7 +1,7 @@
 """
 AgentGuard AI service — FastAPI.
 
-Single job: score risk on every non-trivial x402 request.
+Single job: score risk on every non-trivial x402 request via Groq.
 Kept tiny on purpose (one endpoint, one LLM call, cached upstream).
 """
 from __future__ import annotations
@@ -10,7 +10,6 @@ import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from pydantic import BaseModel
 
 from risk import RiskRequest, RiskResult, score
 
@@ -18,8 +17,8 @@ load_dotenv()
 
 app = FastAPI(
     title="AgentGuard AI Service",
-    version="0.1.0",
-    description="Claude Haiku risk-scoring for x402 requests.",
+    version="0.2.0",
+    description="Groq (Llama-3.3) risk-scoring for x402 requests.",
 )
 
 
@@ -27,8 +26,9 @@ app = FastAPI(
 async def health() -> dict:
     return {
         "status": "ok",
-        "model": os.environ.get("RISK_MODEL", "claude-haiku-4-5-20251001"),
-        "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "provider": "groq",
+        "model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "groq_configured": bool(os.environ.get("GROQ_API_KEY")),
     }
 
 

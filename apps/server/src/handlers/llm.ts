@@ -2,13 +2,23 @@
  * POST /llm/summarize  —  $0.01 USDC.
  *
  * Reached only after policyMiddleware allows AND paymentMiddleware
- * has verified + settled the x402 payment. Runs a real Claude call so
- * the paid resource is genuinely non-trivial.
+ * verified + settled the x402 payment. Runs a real Groq call so the
+ * paid resource is genuinely non-trivial. When GROQ_API_KEY is unset
+ * we fall back to a local extractive summariser so the demo still
+ * works offline.
  */
 import type { Context } from 'hono';
-import Anthropic from '@anthropic-ai/sdk';
+import Groq from 'groq-sdk';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
+const MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+let _groq: Groq | null | undefined;
+
+function getGroq(): Groq | null {
+  if (_groq !== undefined) return _groq;
+  const apiKey = process.env.GROQ_API_KEY;
+  _groq = apiKey ? new Groq({ apiKey }) : null;
+  return _groq;
+}
 
 interface Body {
   text?: string;
@@ -27,9 +37,9 @@ export async function handleLlmSummarize(c: Context) {
     return c.json({ error: 'text field required, min 20 chars' }, 400);
   }
   const style = body.style ?? 'tldr';
+  const groq = getGroq();
 
-  // Fallback when no key is configured so the demo still works.
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!groq) {
     return c.json({
       summary: cheapFallback(body.text, style),
       model: 'local-fallback',
@@ -38,22 +48,25 @@ export async function handleLlmSummarize(c: Context) {
     });
   }
 
-  const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
+    temperature: 0.2,
     max_tokens: 400,
-    system: `You summarise text. ${STYLE_PROMPT[style]} Do not preface with "Summary:" or similar.`,
-    messages: [{ role: 'user', content: body.text }],
+    messages: [
+      {
+        role: 'system',
+        content: `You summarise text. ${STYLE_PROMPT[style]} Do not preface with "Summary:" or similar.`,
+      },
+      { role: 'user', content: body.text },
+    ],
   });
-  const summary = msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-    .trim();
 
+  const summary = completion.choices[0]?.message?.content?.trim() ?? '';
+  const usage = completion.usage;
   return c.json({
     summary,
-    model: msg.model,
-    tokens: msg.usage.input_tokens + msg.usage.output_tokens,
+    model: completion.model,
+    tokens: (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
     paidVia: 'x402 / USDC Algorand Testnet / governed by AgentGuard',
   });
 }

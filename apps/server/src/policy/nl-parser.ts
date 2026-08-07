@@ -1,25 +1,50 @@
 /**
- * Natural-language → structured policy parser.
+ * Natural-language → structured policy parser (Groq).
  *
  * Owner types a sentence like:
  *   "Cap this agent at $2/day, no /gpu/render, approval above $0.10"
- * We ask Claude Haiku to emit a strict JSON policy patch, then validate
- * against PolicySchema. Never auto-applied — the dashboard shows a diff
- * and the owner signs the on-chain update from Pera.
+ * We ask Groq (JSON mode) to emit a strict JSON policy patch, then
+ * validate against PolicySchema. Never auto-applied — the dashboard
+ * shows a diff and the owner signs the on-chain update from Pera.
+ *
+ * If GROQ_API_KEY is unset this call throws; the API route surfaces
+ * that to the frontend as a normal ApiError (the parser isn't a hot
+ * path so a hard failure is fine — nothing to fall back to for text
+ * comprehension).
  */
-import Anthropic from '@anthropic-ai/sdk';
+import Groq from 'groq-sdk';
 import { PolicySchema, type Policy } from './schema';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
+const MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+let _groq: Groq | null | undefined;
+
+function getGroq(): Groq {
+  if (_groq) return _groq;
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY missing — cannot parse natural-language policies');
+  _groq = new Groq({ apiKey });
+  return _groq;
+}
 
 const SYSTEM = `You convert a plain-English spending policy for an autonomous AI agent
-into strict JSON. Follow these rules:
+into strict JSON.
 
-- All money is USDC. Convert dollars to MICRO-USDC (1 USDC = 1_000_000 micro).
-- If the user does not specify a value, KEEP the current value from the "current" policy.
-- Route names look like "POST /llm/summarize" or "POST /gpu/render". Only ever include
-  routes from the "availableRoutes" list.
-- Return ONLY valid JSON matching this exact TypeScript type — no prose, no markdown fences:
+CRITICAL — dollars to micro-USDC conversion:
+- 1 USDC = 1,000,000 micro-USDC.
+- MULTIPLY every dollar amount by 1,000,000 to get micro-USDC.
+- Examples:
+    "$0.01"  → 10000
+    "$0.05"  → 50000
+    "$0.10"  → 100000
+    "$1"     → 1000000
+    "$2"     → 2000000
+    "$10"    → 10000000
+
+Other rules:
+- If the user does not specify a value, KEEP the current value from "current".
+- Route names look like "POST /llm/summarize" or "POST /gpu/render". Only include
+  routes from "availableRoutes".
+- Return ONLY valid JSON matching this exact TypeScript type — no prose, no fences:
 
 {
   "agentAddress": string,
@@ -40,11 +65,14 @@ export interface ParseArgs {
 }
 
 export async function parsePolicy(args: ParseArgs): Promise<Policy> {
-  const message = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+  const groq = getGroq();
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
+    temperature: 0,
     max_tokens: 800,
-    system: SYSTEM,
+    response_format: { type: 'json_object' },
     messages: [
+      { role: 'system', content: SYSTEM },
       {
         role: 'user',
         content: `current = ${JSON.stringify(args.current, null, 2)}
@@ -57,13 +85,12 @@ Return the updated policy as JSON only.`,
     ],
   });
 
-  const text = message.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
+  const raw = completion.choices[0]?.message?.content ?? '';
+  const stripped = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```$/, '')
     .trim();
-
-  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
   const parsed = JSON.parse(stripped);
   return PolicySchema.parse(parsed);
 }

@@ -69,7 +69,7 @@ Chain is truth; every row can be reconstructed from chain history.
 | Component down | Behavior |
 |---|---|
 | AI risk service | Middleware fails **open** on risk only; on-chain caps still enforced. |
-| Anthropic API for `/llm/summarize` | Handler falls back to a local extractive summary — endpoint stays available. |
+| Groq API for `/llm/summarize` | Handler falls back to a local extractive summary — endpoint stays available. |
 | Postgres | Server fails closed; agent gets 500. Contract still enforces on retry. |
 | Facilitator | x402 layer surfaces the failure; nothing settles; caps untouched. |
 | Policy contract not deployed (`POLICY_APP_ID=0`) | Middleware + dashboard fully functional; indexer no-ops; useful for local dev. |
@@ -77,9 +77,9 @@ Chain is truth; every row can be reconstructed from chain history.
 ## Where AI shows up
 
 Exactly one place inline in the request path: risk scoring via
-Claude Haiku 4.5 (JSON mode). One place out-of-band: natural-language
-policy authoring on the Policies page. Both share the same Anthropic
-SDK client. No hidden AI, no extra models.
+Groq (Llama-3.3-70B by default, JSON mode). One place out-of-band:
+natural-language policy authoring on the Policies page. Both share the
+same Groq SDK client. No hidden AI, no extra models.
 
 ## Middleware order (why it matters)
 

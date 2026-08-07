@@ -4,9 +4,9 @@ version: '3.9'
 #   docker compose up --build
 #
 # Requires:
-#   - apps/server/.env with DATABASE_URL pointing to your Supabase pooler
-#   - apps/ai-service/.env with ANTHROPIC_API_KEY
-#   - AVM_ADDRESS set in server env
+#   - apps/server/.env with DATABASE_URL pointing to your Supabase pooler,
+#     AVM_ADDRESS, POLICY_APP_ID/ADDRESS, ADMIN_MNEMONIC, GROQ_API_KEY
+#   - apps/ai-service/.env with GROQ_API_KEY (and optionally GROQ_MODEL)
 
 services:
   ai-service:

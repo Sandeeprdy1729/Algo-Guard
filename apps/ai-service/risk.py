@@ -1,13 +1,18 @@
 """
-Risk scoring via Claude Haiku in JSON mode.
+Risk scoring via Groq (OpenAI-compatible chat completions).
 
-Contract:
+Contract (unchanged from the previous Anthropic implementation — the
+frontend and Node middleware assume this exact JSON shape):
   input:  RiskRequest { agent_id, agent_address, route, amount_micro_usdc }
   output: RiskResult  { score: 0..100, reason: str, action: 'allow'|'escalate'|'block' }
 
-We fetch the agent's last ~20 transactions from the server's /api/audit
-endpoint and give Claude the raw list as context. The prompt biases the
-model to explain *why* — the reason string ships into the audit log.
+We ask Groq (default model: llama-3.3-70b-versatile) in JSON mode to
+produce the verdict. Recent transactions for the agent are fetched via
+the server's /api/audit endpoint and passed as context so the model can
+detect burst patterns.
+
+When GROQ_API_KEY is unset OR any error occurs, we fall through to a
+deterministic heuristic so the middleware never gets a runtime failure.
 """
 from __future__ import annotations
 
@@ -16,13 +21,26 @@ import os
 from typing import Literal
 
 import httpx
-from anthropic import Anthropic
+from groq import Groq
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-_client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-_MODEL = os.environ.get("RISK_MODEL", "claude-haiku-4-5-20251001")
+_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 _HISTORY_URL = os.environ.get("HISTORY_URL", "http://localhost:4021/api/audit")
+
+# Instantiate lazily — an unset key must not blow up at import time.
+_client: Groq | None = None
+
+
+def _get_client() -> Groq | None:
+    global _client
+    if _client is not None:
+        return _client
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return None
+    _client = Groq(api_key=api_key)
+    return _client
 
 
 class RiskRequest(BaseModel):
@@ -46,22 +64,22 @@ You receive:
   - the request (route + amount in micro-USDC)
   - the agent's last N transactions (route, amount, status, timestamps)
 
-Return STRICT JSON only, no prose, no fences:
+Return STRICT JSON only, matching this exact schema:
   {"score": <int 0-100>, "reason": "<one sentence>", "action": "allow"|"escalate"|"block"}
 
 Scoring guide:
-  0-30   normal — matches prior pattern, small amount, sensible cadence
-  30-70  unusual — larger than typical, first time on this route, off-hours
-  70-89  suspicious — burst frequency, sudden spike, sequence indicative of loop
-  90-100 attack pattern — clearly loop / injection / abuse
+  0-30    normal — matches prior pattern, small amount, sensible cadence
+  30-70   unusual — larger than typical, first time on this route, off-hours
+  70-89   suspicious — burst frequency, sudden spike, sequence suggesting a loop
+  90-100  attack pattern — clearly loop / injection / abuse
 
 Actions:
-  allow      score < 70 AND no red flag
-  escalate   score 70-89 OR sudden spike a human should confirm
-  block      score >= 90 OR clear abuse pattern
+  allow     score < 70 AND no red flag
+  escalate  score 70-89 OR sudden spike a human should confirm
+  block     score >= 90 OR clear abuse pattern
 
-Reason must reference a concrete signal (e.g. "8 calls in 30s", "amount 50x prior mean").
-"""
+`reason` must reference a concrete signal (e.g. "8 calls in 30s",
+"amount 50× prior mean")."""
 
 
 async def _load_history(agent_id: str) -> list[dict]:
@@ -75,14 +93,10 @@ async def _load_history(agent_id: str) -> list[dict]:
 
 
 def _fallback(req: RiskRequest, history: list[dict]) -> RiskResult:
-    """Runs when ANTHROPIC_API_KEY is unset or Anthropic times out."""
+    """Runs when GROQ_API_KEY is unset OR Groq errors out."""
     recent = [h for h in history if h.get("status") == "settled"][:10]
     n_recent = len(recent)
-    burst = sum(
-        1
-        for h in recent
-        if h.get("route") == req.route
-    )
+    burst = sum(1 for h in recent if h.get("route") == req.route)
     score = min(100, 10 + burst * 12)
     action: Literal["allow", "escalate", "block"] = (
         "block" if score >= 90 else "escalate" if score >= 70 else "allow"
@@ -96,8 +110,9 @@ def _fallback(req: RiskRequest, history: list[dict]) -> RiskResult:
 
 async def score(req: RiskRequest) -> RiskResult:
     history = await _load_history(req.agent_id)
+    client = _get_client()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if client is None:
         return _fallback(req, history)
 
     payload = {
@@ -106,25 +121,21 @@ async def score(req: RiskRequest) -> RiskResult:
     }
 
     try:
-        msg = _client.messages.create(
+        completion = client.chat.completions.create(
             model=_MODEL,
+            temperature=0,
             max_tokens=200,
-            system=_SYSTEM,
+            response_format={"type": "json_object"},
             messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps(payload, indent=2),
-                }
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": json.dumps(payload, indent=2)},
             ],
         )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
-        text = text.lstrip("`").lstrip("json").lstrip("`").strip()
-        if text.endswith("```"):
-            text = text[: -3].strip()
-        parsed = json.loads(text)
+        content = completion.choices[0].message.content or ""
+        parsed = json.loads(content.strip())
         return RiskResult(**parsed)
     except Exception as exc:
-        # Never fail — the middleware treats us as a fail-open advisor.
+        # Never fail — middleware treats this as an advisory fail-open.
         return RiskResult(
             score=0,
             reason=f"risk-service exception: {type(exc).__name__}",

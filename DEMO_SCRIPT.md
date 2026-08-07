@@ -35,7 +35,7 @@ Click **Generate policy** → JSON diff shown → **Sign & commit to chain**.
 ## Beat 2 — AI risk score catches abuse (1:00 – 2:00)
 
 Trigger the burst pattern again. In the audit table point at the
-**risk** column — Claude Haiku's score climbs from 15 → 88 and the
+**risk** column — Groq's Llama-3.3 score climbs from 15 → 88 and the
 **reason** column shows a human-readable explanation. Middleware
 starts escalating instead of paying.
 

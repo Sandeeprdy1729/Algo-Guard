@@ -58,7 +58,7 @@ agentguard/
 │   │   ├── app/          — /, /agents, /agents/[id], /policies, /audit, /approvals
 │   │   ├── components/   — reusable UI primitives (Loading, Empty, ErrorBanner, StatusPill)
 │   │   └── lib/          — api client with typed ApiError, useFetch hook, SSE hook
-│   ├── ai-service/       FastAPI + Claude Haiku risk scorer (fails open when no key)
+│   ├── ai-service/       FastAPI + Groq (Llama-3.3) risk scorer (fails open when no key)
 │   └── demo-agent/       Scripted x402 client — happy / risky / escalate scenarios
 ├── contracts/            PyTeal on-chain policy contract + AlgoKit deploy
 ├── packages/policy-sdk/  Reusable @agentguard/policy-sdk client
@@ -75,7 +75,7 @@ Boot order for local dev (four terminals):
 # Terminal A — server
 cd apps/server && node_modules/.bin/tsx src/index.ts
 
-# Terminal B — AI service (Anthropic key optional — fails open to heuristic)
+# Terminal B — AI service (Groq key optional — fails open to heuristic)
 cd apps/ai-service && python -m uvicorn main:app --reload --port 8000
 
 # Terminal C — dashboard
