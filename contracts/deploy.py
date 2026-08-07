@@ -3,13 +3,13 @@ Deploy AgentGuard policy contract to Algorand TestNet.
 
 Usage:
     python deploy.py
-    # writes app id + address to ./build/deployment.json
-    # copy into apps/server/.env as POLICY_APP_ID / POLICY_APP_ADDRESS
 
-Accepts either a 25-word legacy Algorand mnemonic OR a 24-word BIP-39
-mnemonic from Pera Universal Wallet. See contracts/wallet.py for the
-detection + derivation rules. Set ACCOUNT_INDEX to derive a non-zero
-HD account when using BIP-39.
+Accepts either a 25-word legacy Algorand mnemonic OR a 12/15/18/21/24-word
+BIP-39 phrase from Pera Universal Wallet. See contracts/wallet.py for the
+detection + derivation rules.
+
+Writes app id + address to ./build/deployment.json and prints the values
+to copy into apps/server/.env.
 """
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ import json
 import os
 import pathlib
 
-from algosdk import transaction
+from algosdk import constants, encoding as algo_encoding, transaction
 from algosdk.v2client import algod
 from dotenv import load_dotenv
 
-from wallet import load_wallet
+from wallet import load_wallet, sign_txn_bytes
 
 load_dotenv()
 
@@ -42,6 +42,15 @@ def _compile(client: algod.AlgodClient, source: bytes) -> bytes:
     return base64.b64decode(res["result"])
 
 
+def sign_transaction(wallet, txn):
+    """Produce a SignedTransaction irrespective of wallet format."""
+    # py-algorand-sdk's "bytes to sign" = "TX" domain prefix || msgpack(txn)
+    txn_b64 = algo_encoding.msgpack_encode(txn)
+    prefixed = constants.txid_prefix + base64.b64decode(txn_b64)
+    sig = sign_txn_bytes(wallet, prefixed)
+    return transaction.SignedTransaction(txn, base64.b64encode(sig).decode())
+
+
 def main() -> None:
     if not DEPLOYER_MNEMONIC:
         raise SystemExit(
@@ -56,8 +65,15 @@ def main() -> None:
     )
 
     client = algod.AlgodClient(ALGOD_TOKEN, ALGOD_URL)
-    sp = client.suggested_params()
 
+    # Fail fast if the deployer isn't funded.
+    info = client.account_info(wallet.address)
+    algo = info["amount"] / 1e6
+    print(f"deployer balance: {algo} ALGO  (min-balance requires >= 0.2 for app creation)")
+    if algo < 0.2:
+        raise SystemExit(f"insufficient ALGO to deploy — need >= 0.2, have {algo}")
+
+    sp = client.suggested_params()
     approval = _compile(client, _load_teal("approval.teal"))
     clear = _compile(client, _load_teal("clear.teal"))
 
@@ -71,9 +87,11 @@ def main() -> None:
         local_schema=transaction.StateSchema(num_uints=0, num_byte_slices=0),
         extra_pages=1,
     )
-    signed = txn.sign(wallet.private_key)
+
+    signed = sign_transaction(wallet, txn)
     tx_id = client.send_transaction(signed)
     print(f"submitted create tx {tx_id}")
+
     result = transaction.wait_for_confirmation(client, tx_id, 10)
     app_id = result["application-index"]
 
@@ -86,7 +104,9 @@ def main() -> None:
         "app_address": app_addr,
         "deployer": wallet.address,
         "network": "algorand-testnet",
-        "lora": f"https://lora.algokit.io/testnet/application/{app_id}",
+        "tx_id": tx_id,
+        "lora_app": f"https://lora.algokit.io/testnet/application/{app_id}",
+        "lora_tx": f"https://lora.algokit.io/testnet/tx/{tx_id}",
     }
     build = pathlib.Path(__file__).parent / "build"
     build.mkdir(exist_ok=True)

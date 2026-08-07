@@ -51,13 +51,22 @@ async function pollOnce() {
     .do();
 
   const txns: any[] = res.transactions ?? [];
+  if (txns.length) {
+    log.debug('indexer.batch', { count: txns.length, fromRound: cursor.round.toString() });
+  }
   for (const t of txns) {
-    const round = BigInt(t['confirmed-round'] ?? 0);
+    // algosdk v3 returns camelCase; earlier drafts and raw HTTP use kebab-case.
+    const roundRaw = t.confirmedRound ?? t['confirmed-round'];
+    const round = typeof roundRaw === 'bigint' ? roundRaw : BigInt(roundRaw ?? 0);
     if (round < cursor.round) continue;
     const txId: string = t.id;
-    const logs: string[] = t.logs ?? [];
-    for (const b64 of logs) {
-      const buf = Buffer.from(b64, 'base64');
+    const logs: (string | Uint8Array)[] = t.logs ?? [];
+    for (const entry of logs) {
+      // algosdk v3 returns Uint8Array; older HTTP JSON returns base64 strings.
+      const buf =
+        entry instanceof Uint8Array
+          ? Buffer.from(entry)
+          : Buffer.from(entry, 'base64');
       const decoded = decodeLog(buf);
       if (!decoded) continue;
       try {

@@ -11,6 +11,7 @@ import { emit } from '../api/stream';
 import type { Env } from '../types';
 import { log } from '../lib/logger';
 import { transactionsRepo } from '../repos';
+import { recordSpend } from '../chain/record-spend';
 
 export const auditMiddleware: MiddlewareHandler<Env> = async (c: Context<Env>, next) => {
   await next();
@@ -45,6 +46,16 @@ export const auditMiddleware: MiddlewareHandler<Env> = async (c: Context<Env>, n
     agentId: gctx.agentId,
     txnId,
     amountMicroUsdc: gctx.amountMicroUsdc,
+  });
+
+  // Fire-and-forget on-chain audit call. NOT atomically bound to the
+  // USDC transfer (upstream limitation of @x402/avm's exact scheme);
+  // still delivers an unforgeable on-chain SPND log per payment.
+  void recordSpend({
+    agentAddress: gctx.agentAddress,
+    route: gctx.route,
+    amountMicroUsdc: gctx.amountMicroUsdc,
+    requestId: c.get('request')?.requestId ?? '-',
   });
 };
 

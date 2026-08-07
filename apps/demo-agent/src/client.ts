@@ -1,26 +1,28 @@
 /**
  * x402-aware fetch wrapper for the AgentGuard demo agent.
  *
- * Composes:
- *   toClientAvmSigner(privBase64)  → AVM signer
- *   new ExactAvmScheme(signer)     → client-side "exact" scheme
- *   x402Client.fromConfig(...)     → SDK client
- *   wrapFetchWithPayment(fetch, c) → fetch that handles the 402 dance
+ *   ExactAvmScheme(signer) → x402Client → wrapFetchWithPayment(fetch, client)
  *
- * On top of that we add:
- *   - the mandatory `X-Agent-Address` header for AgentGuard middleware
+ * The signer is our dual-format Wallet wrapped in an AVMSignerLike; the
+ * signer works for both 25-word (algosdk sk) and BIP-39 (ARC-52 via
+ * xhd-wallet-api) wallets.
+ *
+ * Adds on top of the standard SDK:
+ *   - mandatory `X-Agent-Address` header for AgentGuard middleware
  *   - detection of AgentGuard's `escalationIntentId` in 402 payloads
- *   - a helper to poll the approval status until human decides
+ *   - `waitForApproval()` that polls until a human decides
  */
 import { wrapFetchWithPayment } from '@x402/fetch';
 import { x402Client } from '@x402/core/client';
-import {
-  ALGORAND_TESTNET_CAIP2,
-  ExactAvmScheme,
-  toClientAvmSigner,
-} from '@x402/avm';
+import { ExactAvmScheme } from '@x402/avm';
 import { x402Version } from '@x402/core';
+import { walletToAvmSigner } from './avm-signer.js';
 import type { Wallet } from './wallet.js';
+
+// Full-form Algorand TestNet CAIP-2 as the facilitator advertises it.
+// @x402/avm's exported constant is CAIP-2-truncated and mismatches.
+const ALGORAND_TESTNET_CAIP2 =
+  'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=';
 
 export interface AgentGuardResponse<T = unknown> {
   status: number;
@@ -31,14 +33,14 @@ export interface AgentGuardResponse<T = unknown> {
 }
 
 export function makeClient(serverUrl: string, wallet: Wallet) {
-  const signer = toClientAvmSigner(wallet.privateKeyBase64);
+  const signer = walletToAvmSigner(wallet);
 
   const client = x402Client.fromConfig({
     schemes: [
       {
         x402Version,
         network: ALGORAND_TESTNET_CAIP2,
-        client: new ExactAvmScheme(signer),
+        client: new ExactAvmScheme(signer as any),
       },
     ],
   });

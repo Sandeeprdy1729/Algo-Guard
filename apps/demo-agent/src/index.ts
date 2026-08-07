@@ -27,29 +27,34 @@ if (!MNEMONIC) {
 }
 
 const scenario = (process.argv[2] ?? 'happy').toLowerCase();
-const wallet = loadWallet(MNEMONIC, { accountIndex: ACCOUNT_INDEX });
-const client = makeClient(SERVER, wallet);
 
-console.log('═'.repeat(60));
-console.log(`agent wallet:  ${wallet.address}`);
-console.log(`mnemonic:      ${wallet.format}${wallet.hdPath ? ` @ ${wallet.hdPath}` : ''}`);
-console.log(`server:        ${SERVER}`);
-console.log(`scenario:      ${scenario}`);
-console.log('═'.repeat(60));
+(async () => {
+  const wallet = await loadWallet(MNEMONIC, { accountIndex: ACCOUNT_INDEX });
+  const client = makeClient(SERVER, wallet);
 
-const runners: Record<string, (c: ReturnType<typeof makeClient>) => Promise<void>> = {
-  happy,
-  risky,
-  escalate,
-};
+  console.log('═'.repeat(60));
+  console.log(`agent wallet:  ${wallet.address}`);
+  console.log(`mnemonic:      ${wallet.format}${wallet.hdPath ? ` @ ${wallet.hdPath}` : ''}`);
+  console.log(`server:        ${SERVER}`);
+  console.log(`scenario:      ${scenario}`);
+  console.log('═'.repeat(60));
 
-const fn = runners[scenario];
-if (!fn) {
-  console.error(`unknown scenario "${scenario}". choose one of: ${Object.keys(runners).join(', ')}`);
-  process.exit(2);
-}
+  const runners: Record<string, (c: ReturnType<typeof makeClient>) => Promise<void>> = {
+    happy,
+    risky,
+    escalate,
+  };
 
-fn(client).catch((err) => {
-  console.error('scenario failed:', err);
-  process.exit(3);
-});
+  const fn = runners[scenario];
+  if (!fn) {
+    console.error(`unknown scenario "${scenario}". choose one of: ${Object.keys(runners).join(', ')}`);
+    process.exit(2);
+  }
+
+  try {
+    await fn(client);
+  } catch (err) {
+    console.error('scenario failed:', err);
+    process.exit(3);
+  }
+})();

@@ -20,8 +20,12 @@ import { paymentMiddleware } from '@x402/hono';
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server';
 import type { ResourceServerExtension } from '@x402/core/types';
 import { ExactAvmScheme } from '@x402/avm/exact/server';
-import { ALGORAND_TESTNET_CAIP2 } from '@x402/avm';
 import { bazaarResourceServerExtension } from '@x402-avm/extensions';
+
+// Full-form Algorand TestNet CAIP-2 as the facilitator advertises it —
+// @x402/avm's constant is truncated and causes "unsupported network".
+const ALGORAND_TESTNET_CAIP2_FULL =
+  'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=';
 
 import { handleLlmSummarize } from './handlers/llm';
 import { handleGpuRender } from './handlers/gpu';
@@ -45,7 +49,7 @@ export interface AppOptions {
 export function createApp(opts: AppOptions) {
   const facilitatorClient = new HTTPFacilitatorClient({ url: opts.facilitatorUrl });
   const x402Server = new x402ResourceServer(facilitatorClient)
-    .register(ALGORAND_TESTNET_CAIP2, new ExactAvmScheme())
+    .register(ALGORAND_TESTNET_CAIP2_FULL, new ExactAvmScheme())
     .registerExtension(bazaarResourceServerExtension as unknown as ResourceServerExtension);
 
   const app = new Hono<Env>();
