@@ -25,6 +25,7 @@ import type { Env } from '../types';
 import { log } from '../lib/logger';
 import { AppError, badRequest } from '../lib/errors';
 import { agentsRepo, approvalsRepo, transactionsRepo } from '../repos';
+import { prisma } from '../chain/prisma';
 
 const RISK_MIN = parseInt(process.env.RISK_MIN_AMOUNT_MICRO ?? '10000', 10);
 const AGENT_HEADER = 'x-agent-address';
@@ -138,6 +139,44 @@ export const policyMiddleware: MiddlewareHandler<Env> = async (
   }
 
   if (verdict.action === 'escalate') {
+    // Consume any approved intent for THIS agent + route + amount within
+    // the TTL window. If found, the human already said yes — treat the
+    // request as allowed and skip escalation.
+    const approvedIntent = await prisma.approval.findFirst({
+      where: {
+        status: 'approved',
+        transaction: {
+          agentId: agent.id,
+          route,
+          amountMicroUsdc: BigInt(priceMicro),
+        },
+        decidedAt: { gte: new Date(Date.now() - ESCALATION_TTL_MS) },
+      },
+      orderBy: { decidedAt: 'desc' },
+    });
+    if (approvedIntent) {
+      // Approval satisfies the escalation for its TTL window. We do NOT
+      // mark it expired here — the x402 payment flow makes two passes
+      // (pre-flight and payment-signature retry) for a single logical
+      // request; both must see the same approval. Natural expiry
+      // (approval.expiresAt) bounds abuse.
+      log.info('policy.escalation_honored', {
+        requestId: c.get('request')?.requestId,
+        agentId: agent.id,
+        approvalId: approvedIntent.id,
+      });
+      c.set('agentGuard', {
+        agentId: agent.id,
+        agentAddress,
+        route,
+        amountMicroUsdc: priceMicro,
+        riskScore: risk?.score ?? null,
+        riskReason: risk?.reason ?? null,
+        startedAt: Date.now(),
+      });
+      return next();
+    }
+
     const tx = await transactionsRepo.create({
       agentId: agent.id,
       route,
@@ -158,9 +197,14 @@ export const policyMiddleware: MiddlewareHandler<Env> = async (
       code: verdict.code,
       approvalId: approval.id,
     });
+    // NOTE: status 403 (not 402). A 402 would be interpreted by any
+    // x402 client library as a payment challenge and it would try to
+    // construct a payment from our body, which is not a valid x402
+    // `accepts` payload. 403 is honest ("forbidden until approved")
+    // and passes through the client wrapper untouched so callers see
+    // the escalation info directly.
     return c.json(
       {
-        x402Version: 1,
         error: 'Payment escalated to human approval',
         code: 'ESCALATION_REQUIRED' as const,
         verdictCode: verdict.code,
@@ -169,7 +213,7 @@ export const policyMiddleware: MiddlewareHandler<Env> = async (
         expiresAt: approval.expiresAt.toISOString(),
         pollUrl: `/api/approvals/${approval.id}`,
       },
-      402
+      403
     );
   }
 

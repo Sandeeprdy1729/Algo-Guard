@@ -242,13 +242,13 @@ describe('AgentGuard app integration', () => {
     assert.match(j.reason, /Daily cap/);
   });
 
-  test('escalation threshold → 402 with escalationIntentId', async () => {
+  test('escalation threshold → 403 with escalationIntentId', async () => {
     const r = await request('/llm/summarize', {
       method: 'POST',
       headers: { 'x-agent-address': AGENT_ADDR_ESCALATE },
       body: { text: 'x'.repeat(50) },
     });
-    assert.equal(r.status, 402);
+    assert.equal(r.status, 403);
     const j = await r.json();
     assert.equal(j.code, 'ESCALATION_REQUIRED');
     assert.equal(j.verdictCode, 'HUMAN_THRESHOLD');

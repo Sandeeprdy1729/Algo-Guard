@@ -60,9 +60,9 @@ export function makeClient(serverUrl: string, wallet: Wallet) {
 
       const body = (await res.json().catch(() => ({}))) as any;
 
-      if (res.status === 402 && body?.escalationIntentId) {
+      if (res.status === 403 && body?.escalationIntentId) {
         return {
-          status: 402,
+          status: 403,
           body: body as T,
           paymentTxId: null,
           escalation: {
