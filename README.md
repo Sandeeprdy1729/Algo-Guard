@@ -137,11 +137,58 @@ pnpm --filter @agentguard/server dev            # :4021
 pnpm --filter @agentguard/dashboard dev         # :3000
 python -m uvicorn main:app --app-dir apps/ai-service --port 8000
 
-# 5. Drive the demo
+# 5. Register the demo agent on chain (idempotent — skip if already done)
+python contracts/register_agent.py --check-only     # NOT_REGISTERED?
+python contracts/register_agent.py                  # registers deployer as the demo agent
+
+# 6. Drive the demo
 pnpm --filter @agentguard/demo-agent start happy      # normal payment
 pnpm --filter @agentguard/demo-agent start risky      # burst → hits daily cap
 pnpm --filter @agentguard/demo-agent start escalate   # $0.50 → human approval
 ```
+
+## Tests
+
+Everything below runs against the current codebase — real Supabase for integration, no mocked chain.
+
+```bash
+# TypeScript packages
+cd apps/server      && node_modules/.bin/tsc --noEmit
+cd apps/dashboard   && node_modules/.bin/tsc --noEmit
+cd apps/demo-agent  && node_modules/.bin/tsc --noEmit
+
+# Policy engine (pure, no I/O)
+cd apps/server && node_modules/.bin/tsx --test src/policy/engine.test.ts       # 9/9
+
+# Full server integration (real Supabase, mocked facilitator)
+cd apps/server && node_modules/.bin/tsx --test src/app.test.ts                 # 13/13
+
+# Demo-agent wallet — legacy + BIP-39 (ARC-52) cross-verified against Python
+cd apps/demo-agent && node_modules/.bin/tsx --test src/wallet.test.ts          # 15/15
+
+# Contract compile + wallet + register_agent (offline unit tests)
+python -m pytest contracts/tests -q                                            # 31/31
+
+# AI service (hermetic + optional live-Groq via GROQ_API_KEY_TEST)
+cd apps/ai-service && python -m pytest test_service.py -q                      # 6/6
+```
+
+## Deployment
+
+The stack cleanly splits across three free platforms:
+
+| Component | Host | Why |
+|---|---|---|
+| Dashboard (`apps/dashboard`) | **Vercel** | Native Next.js support; one-click deploys |
+| Server (`apps/server`) | **Railway** / Render / Fly | Long-running background indexer + SSE ruled out serverless |
+| AI service (`apps/ai-service`) | **Railway** / Render | FastAPI + Python; keep-warm needed for sub-second risk scoring |
+| Postgres | Supabase (free tier) | Already provisioned |
+| Smart contract | Algorand TestNet | Already deployed as app `768730271` |
+
+Vercel: import repo → **Root Directory `apps/dashboard`** → set `AGENTGUARD_SERVER=<server-url>` → Deploy.
+Railway: two services from the same repo, roots `apps/server` and `apps/ai-service`; paste the env vars from step 2 above. Point them at each other via `AI_SERVICE_URL` (on server) and back to the server URL from Vercel.
+
+Full step-by-step deployment guide (screenshots + gotchas) available on request or in the ops runbook.
 
 ## Environment Variables
 
