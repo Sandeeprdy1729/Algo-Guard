@@ -29,11 +29,15 @@ export default function AuditPage() {
   );
   const { data, loading, error, refetch } = useFetch<{ transactions: Tx[] }>(path);
 
+  const exportQuery = filter ? `?status=${filter}` : '';
+  const csvHref = `/api/audit/export.csv${exportQuery}`;
+  const jsonHref = `/api/audit/export.json${exportQuery}`;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-semibold tracking-tight">Audit</h1>
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex items-center gap-1">
           {FILTERS.map((f) => (
             <button
               key={f || 'all'}
@@ -48,6 +52,31 @@ export default function AuditPage() {
               {f || 'all'}
             </button>
           ))}
+          <span className="mx-2 text-muted">|</span>
+          <a
+            href={csvHref}
+            download
+            className="text-xs px-3 py-1 rounded border border-accent/60 text-accent bg-accent/10 hover:bg-accent/20"
+            title={
+              filter
+                ? `Download ${filter} transactions as CSV`
+                : 'Download the full transaction history as CSV'
+            }
+          >
+            Download CSV
+          </a>
+          <a
+            href={jsonHref}
+            download
+            className="text-xs px-3 py-1 rounded border border-border text-muted hover:border-muted hover:text-text"
+            title={
+              filter
+                ? `Download ${filter} transactions as JSON`
+                : 'Download the full transaction history as JSON'
+            }
+          >
+            JSON
+          </a>
         </div>
       </div>
 
