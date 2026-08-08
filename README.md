@@ -206,16 +206,7 @@ Full step-by-step deployment guide (screenshots + gotchas) available on request 
 | `ACCOUNT_INDEX` | contracts + demo-agent | HD account index for BIP-39 wallets (default 0) |
 | `AGENTGUARD_SERVER` | dashboard | Backend URL for the API proxy (default `http://localhost:4021`) |
 
-## Screenshots
 
-| | |
-|---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Policy Editor](docs/screenshots/policy-editor.png) |
-| **Overview** — live spend, blocked count, activity stream | **Policy Editor** — plain-English → diff → sign |
-| ![Audit](docs/screenshots/audit.png) | ![Approvals](docs/screenshots/approvals.png) |
-| **Audit** — every request with chain link | **Approvals** — pending human decisions |
-
-*Add screenshots to `docs/screenshots/` after your first live run.*
 
 ## The Demo (3 Beats, ~3 minutes)
 
