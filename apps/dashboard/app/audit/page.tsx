@@ -1,6 +1,9 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useMemo, useState } from 'react';
+import { clsx } from 'clsx';
 import { fmtUsdc, relTime, shortAddr } from '@/lib/api';
 import { useFetch } from '@/lib/swr';
 import { Empty, ErrorBanner, Loading, StatusPill } from '@/components/ui';
@@ -19,13 +22,19 @@ interface Tx {
   createdAt: string;
 }
 
-const FILTERS = ['', 'settled', 'escalated', 'blocked_policy', 'blocked_risk'] as const;
+const FILTERS: { key: string; label: string; count?: number }[] = [
+  { key: '',              label: 'All' },
+  { key: 'settled',       label: 'Settled' },
+  { key: 'escalated',     label: 'Escalated' },
+  { key: 'blocked_policy',label: 'Blocked · Policy' },
+  { key: 'blocked_risk',  label: 'Blocked · Risk' },
+];
 
 export default function AuditPage() {
   const [filter, setFilter] = useState<string>('');
   const path = useMemo(
     () => `/api/audit?limit=200${filter ? `&status=${filter}` : ''}`,
-    [filter]
+    [filter],
   );
   const { data, loading, error, refetch } = useFetch<{ transactions: Tx[] }>(path);
 
@@ -35,124 +44,134 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-2xl font-semibold tracking-tight">Audit</h1>
-        <div className="ml-auto flex items-center gap-1">
-          {FILTERS.map((f) => (
-            <button
-              key={f || 'all'}
-              onClick={() => setFilter(f)}
-              className={
-                'text-xs px-3 py-1 rounded border ' +
-                (filter === f
-                  ? 'border-accent text-accent bg-accent/10'
-                  : 'border-border text-muted hover:border-muted')
-              }
-            >
-              {f || 'all'}
-            </button>
-          ))}
-          <span className="mx-2 text-muted">|</span>
-          <a
-            href={csvHref}
-            download
-            className="text-xs px-3 py-1 rounded border border-accent/60 text-accent bg-accent/10 hover:bg-accent/20"
-            title={
-              filter
-                ? `Download ${filter} transactions as CSV`
-                : 'Download the full transaction history as CSV'
-            }
-          >
-            Download CSV
-          </a>
-          <a
-            href={jsonHref}
-            download
-            className="text-xs px-3 py-1 rounded border border-border text-muted hover:border-muted hover:text-text"
-            title={
-              filter
-                ? `Download ${filter} transactions as JSON`
-                : 'Download the full transaction history as JSON'
-            }
-          >
-            JSON
-          </a>
+      <header className="flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <div className="sec-label">Security console</div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tightest text-text">
+            Audit trail
+          </h1>
+          <p className="mt-1 text-sm text-text-2">
+            Every request the policy layer saw — settled payments, blocks, escalations. Chain
+            transactions link to Lora.
+          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <a href={csvHref} download className="btn btn-ghost">Download CSV</a>
+          <a href={jsonHref} download className="btn btn-ghost text-2xs">JSON</a>
+        </div>
+      </header>
+
+      {/* Filters */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {FILTERS.map((f) => {
+          const active = filter === f.key;
+          return (
+            <button
+              key={f.key || 'all'}
+              onClick={() => setFilter(f.key)}
+              className={clsx(
+                'px-3 py-1.5 text-2xs font-mono uppercase tracking-widest rounded-md border transition-all duration-150',
+                active
+                  ? 'border-text/30 bg-text/5 text-text'
+                  : 'border-border text-muted hover:text-text-2 hover:border-border-2',
+              )}
+            >
+              {f.label}
+            </button>
+          );
+        })}
       </div>
 
       {error && (
-        <ErrorBanner
-          title="Could not load audit"
-          detail={error.message}
-          requestId={error.requestId}
-          onRetry={refetch}
-        />
+        <ErrorBanner title="Could not load audit" detail={error.message} requestId={error.requestId} onRetry={refetch} />
       )}
-      {loading && <Loading label="Loading audit trail…" />}
+      {loading && <Loading label="Loading audit trail" />}
+
       {data && (
-        <div className="card">
+        <div className="card overflow-hidden">
           {data.transactions.length === 0 ? (
-            <Empty>No transactions match this filter.</Empty>
+            <div className="p-6"><Empty>No transactions match this filter.</Empty></div>
           ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-muted text-xs uppercase">
-                <tr>
-                  <th className="p-3">When</th>
-                  <th className="p-3">Agent</th>
-                  <th className="p-3">Route</th>
-                  <th className="p-3">Amount</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Risk</th>
-                  <th className="p-3">Latency</th>
-                  <th className="p-3">Chain</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.transactions.map((t) => (
-                  <tr key={t.id} className="border-t border-border">
-                    <td className="p-3 text-xs text-muted whitespace-nowrap">
-                      {relTime(t.createdAt)}
-                    </td>
-                    <td className="p-3">
-                      <div>{t.agentName ?? '—'}</div>
-                      <div className="text-xs text-muted font-mono">
-                        {t.agentAddress ? shortAddr(t.agentAddress) : ''}
-                      </div>
-                    </td>
-                    <td className="p-3 font-mono text-xs">{t.route}</td>
-                    <td className="p-3 font-mono">{fmtUsdc(t.amountMicroUsdc)}</td>
-                    <td className="p-3">
-                      <StatusPill status={t.status} />
-                    </td>
-                    <td className="p-3 text-xs">
-                      {t.riskScore != null ? t.riskScore : '—'}
-                      {t.riskReason && (
-                        <div className="text-muted text-[10px] max-w-xs truncate" title={t.riskReason}>
-                          {t.riskReason}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-3 text-xs text-muted">
-                      {t.latencyMs != null ? `${t.latencyMs} ms` : '—'}
-                    </td>
-                    <td className="p-3 text-xs">
-                      {t.loraUrl ? (
-                        <a
-                          href={t.loraUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-accent hover:underline"
-                        >
-                          view ↗
-                        </a>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="sec-label px-4 py-3 text-left font-normal">When</th>
+                    <th className="sec-label px-4 py-3 text-left font-normal">Agent</th>
+                    <th className="sec-label px-4 py-3 text-left font-normal">Route</th>
+                    <th className="sec-label px-4 py-3 text-right font-normal">Amount</th>
+                    <th className="sec-label px-4 py-3 text-left font-normal">Decision</th>
+                    <th className="sec-label px-4 py-3 text-left font-normal">Signal</th>
+                    <th className="sec-label px-4 py-3 text-right font-normal">Latency</th>
+                    <th className="sec-label px-4 py-3 text-left font-normal">Chain</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.transactions.map((t) => (
+                    <tr
+                      key={t.id}
+                      className="border-t border-border/60 hover:bg-surface-2/50 transition-colors duration-150"
+                    >
+                      <td className="px-4 py-3 text-2xs text-muted whitespace-nowrap num">
+                        {relTime(t.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-[13px] text-text">{t.agentName ?? '—'}</div>
+                        <div className="text-2xs font-mono text-muted mt-0.5">
+                          {t.agentAddress ? shortAddr(t.agentAddress) : ''}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-2xs text-text-2">{t.route}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="text-[13px] num text-text">{fmtUsdc(t.amountMicroUsdc)}</div>
+                        <div className="text-2xs font-mono text-muted">USDC</div>
+                      </td>
+                      <td className="px-4 py-3"><StatusPill status={t.status} /></td>
+                      <td className="px-4 py-3 max-w-[26ch]">
+                        {t.riskScore != null ? (
+                          <>
+                            <div className="text-2xs font-mono num text-text-2">risk {t.riskScore}</div>
+                            {t.riskReason && (
+                              <div
+                                className="text-2xs text-muted mt-0.5 truncate"
+                                title={t.riskReason}
+                              >
+                                {t.riskReason}
+                              </div>
+                            )}
+                          </>
+                        ) : t.riskReason ? (
+                          <div className="text-2xs text-muted truncate" title={t.riskReason}>
+                            {t.riskReason}
+                          </div>
+                        ) : (
+                          <span className="text-2xs text-dim">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-2xs font-mono text-muted num">
+                        {t.latencyMs != null ? `${t.latencyMs} ms` : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {t.loraUrl ? (
+                          <a
+                            href={t.loraUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-2xs font-mono text-accent hover:underline underline-offset-2"
+                          >
+                            View on Lora ↗
+                          </a>
+                        ) : (
+                          <span className="text-2xs text-dim">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

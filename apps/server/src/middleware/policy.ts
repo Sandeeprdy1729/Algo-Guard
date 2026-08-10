@@ -26,6 +26,7 @@ import { log } from '../lib/logger';
 import { AppError, badRequest } from '../lib/errors';
 import { agentsRepo, approvalsRepo, transactionsRepo } from '../repos';
 import { prisma } from '../chain/prisma';
+import { isSlackEnabled, postApprovalMessage } from '../lib/slack';
 
 const RISK_MIN = parseInt(process.env.RISK_MIN_AMOUNT_MICRO ?? '10000', 10);
 const AGENT_HEADER = 'x-agent-address';
@@ -197,6 +198,32 @@ export const policyMiddleware: MiddlewareHandler<Env> = async (
       code: verdict.code,
       approvalId: approval.id,
     });
+
+    // Fire the Slack notification in the background. Never awaited on the
+    // request path — Slack outage must not break the escalation flow.
+    if (isSlackEnabled()) {
+      void postApprovalMessage({
+        approvalId: approval.id,
+        agentName: agent.name,
+        agentAddress: agent.algoAddress,
+        route,
+        amountUsdc: priceMicro / 1_000_000,
+        riskScore: risk?.score ?? null,
+        riskReason: verdict.reason,
+        expiresAt: approval.expiresAt,
+      }).then(async (res) => {
+        if (res?.ok && res.channel && res.ts) {
+          try {
+            await approvalsRepo.attachSlackMessage(approval.id, res.channel, res.ts);
+          } catch (err) {
+            log.warn('slack.attach_failed', {
+              approvalId: approval.id,
+              msg: (err as Error).message,
+            });
+          }
+        }
+      });
+    }
     // NOTE: status 403 (not 402). A 402 would be interpreted by any
     // x402 client library as a payment challenge and it would try to
     // construct a payment from our body, which is not a valid x402

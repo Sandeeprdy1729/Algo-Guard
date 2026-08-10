@@ -5,7 +5,7 @@
  */
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { evaluate } from './engine';
+import { evaluate, trace } from './engine';
 import type { EvaluationInput, Policy } from './schema';
 
 const A = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -102,4 +102,69 @@ test('cap check uses spend + amount, not just amount', () => {
   );
   assert.equal(v.action, 'block');
   assert.equal((v as any).code, 'DAILY_CAP');
+});
+
+// ── trace() — the verbose shape used by the dashboard + MCP ───────
+
+test('trace: allow returns rules array with none matched (except info)', () => {
+  const t = trace(mk());
+  assert.equal(t.decision, 'ALLOW');
+  assert.equal(t.primaryCode, 'ALLOW');
+  assert.equal(t.routeAllowed, true);
+  assert.ok(t.rules.length >= 7, 'engine emits ≥7 rules');
+  const decisive = t.rules.filter((r) => r.matched && r.severity !== 'info');
+  assert.equal(decisive.length, 0, 'no decisive rule fires on an allow');
+});
+
+test('trace: frozen is the first fired rule, no matter what else is wrong', () => {
+  // Route not in allowlist AND frozen — frozen must win by precedence.
+  const t = trace(
+    mk({
+      policy: { ...base, frozen: true },
+      route: 'POST /gpu/render',
+    })
+  );
+  assert.equal(t.decision, 'BLOCK');
+  assert.equal(t.primaryCode, 'FROZEN');
+  const first = t.rules.find((r) => r.matched && r.severity !== 'info');
+  assert.equal(first?.id, 'agent_frozen');
+});
+
+test('trace: spendingState is populated even on ALLOW', () => {
+  const t = trace(mk({ amountMicroUsdc: 50_000 }));
+  assert.equal(t.spendingState.dailyCapMicroUsdc, base.dailyCapMicroUsdc);
+  assert.equal(t.spendingState.remainingDailyMicroUsdc, base.dailyCapMicroUsdc);
+  assert.equal(t.spendingState.amountMicroUsdc, 50_000);
+  assert.ok(t.spendingState.projectedDailyUtilPct > 0);
+});
+
+test('trace: daily_warning is info (never decisive) even when matched', () => {
+  // 80% utilization triggers the info-band warn but the decision is ALLOW.
+  const t = trace(
+    mk({ spend: { ...empty, dailySpentMicroUsdc: 80_000 }, amountMicroUsdc: 0 })
+  );
+  const warn = t.rules.find((r) => r.id === 'daily_warning');
+  assert.equal(warn?.matched, true);
+  assert.equal(warn?.severity, 'info');
+  assert.equal(t.decision, 'ALLOW');
+});
+
+test('trace: matches evaluate() for every branch', () => {
+  const cases: EvaluationInput[] = [
+    mk(),
+    mk({ policy: { ...base, frozen: true } }),
+    mk({ route: 'POST /gpu/render' }),
+    mk({ spend: { ...empty, dailySpentMicroUsdc: 95_000 }, amountMicroUsdc: 10_000 }),
+    mk({ riskScore: 95 }),
+    mk({ riskScore: 75 }),
+  ];
+  for (const input of cases) {
+    const v = evaluate(input);
+    const t = trace(input);
+    const expected =
+      v.action === 'allow' ? 'ALLOW'
+      : v.action === 'block' ? 'BLOCK'
+      : 'ESCALATE';
+    assert.equal(t.decision, expected, `mismatch for ${JSON.stringify(input.policy.frozen)}`);
+  }
 });

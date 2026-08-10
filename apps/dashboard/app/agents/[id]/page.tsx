@@ -1,15 +1,26 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useParams } from 'next/navigation';
-import { apiPost, fmtUsdc, relTime, shortAddr } from '@/lib/api';
+import { apiPost, fmtUsdc } from '@/lib/api';
 import { useFetch } from '@/lib/swr';
-import { Empty, ErrorBanner, Loading, Pill, StatusPill } from '@/components/ui';
+import {
+  Empty,
+  ErrorBanner,
+  Loading,
+  Progress,
+  StatusPill,
+} from '@/components/ui';
+import { ActivityRow, type ActivityTx } from '@/components/activity-row';
+import { PolicyEvaluation } from '@/components/policy-evaluation';
+import { AgentTimeline } from '@/components/agent-timeline';
 
 interface Detail {
   id: string;
   name: string;
   algoAddress: string;
-  status: string;
+  status: 'active' | 'frozen';
   policy: null | {
     dailyCapMicroUsdc: number;
     monthlyCapMicroUsdc: number;
@@ -17,25 +28,18 @@ interface Detail {
     allowedRoutes: string[];
     riskThreshold: number;
   };
-  transactions: {
-    id: string;
-    route: string;
-    amountMicroUsdc: number;
-    status: string;
-    riskScore: number | null;
-    riskReason: string | null;
-    algoTxnId: string | null;
-    createdAt: string;
-  }[];
+  transactions: ActivityTx[];
   spend: { dailySpentMicroUsdc: number; monthlySpentMicroUsdc: number };
 }
 
 export default function AgentDetail() {
   const { id } = useParams<{ id: string }>();
-  const { data, loading, error, refetch } = useFetch<Detail>(id ? `/api/agents/${id}` : null);
+  const { data, loading, error, refetch } = useFetch<Detail>(
+    id ? `/api/agents/${id}` : null,
+  );
 
-  if (loading) return <Loading label="Loading agent…" />;
-  if (error) {
+  if (loading) return <Loading label="Loading agent" />;
+  if (error)
     return (
       <ErrorBanner
         title="Could not load agent"
@@ -44,126 +48,237 @@ export default function AgentDetail() {
         onRetry={refetch}
       />
     );
-  }
   if (!data) return null;
 
+  const dailyRemaining = Math.max(
+    0,
+    (data.policy?.dailyCapMicroUsdc ?? 0) - data.spend.dailySpentMicroUsdc,
+  );
+  const allowedRoutes = data.policy?.allowedRoutes ?? [];
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold">{data.name}</h1>
-        <Pill>{shortAddr(data.algoAddress)}</Pill>
-        <StatusPill status={data.status} />
-        <div className="ml-auto flex gap-2">
-          {data.status === 'active' ? (
-            <button
-              onClick={async () => {
-                await apiPost(`/api/agents/${id}/freeze`, {});
-                await refetch();
-              }}
-              className="px-3 py-1 text-sm border border-danger text-danger rounded hover:bg-danger/10"
-            >
-              Freeze
-            </button>
+    <div className="space-y-8">
+      {/* ── identity header ─────────────────────────────────── */}
+      <header className="flex items-start justify-between gap-6 flex-wrap">
+        <div className="min-w-0">
+          <div className="sec-label">Agent profile</div>
+          <div className="mt-1 flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-semibold tracking-tightest text-text">
+              {data.name}
+            </h1>
+            <StatusPill status={data.status} />
+          </div>
+          <div className="mt-2 font-mono text-2xs text-muted break-all">
+            {data.algoAddress}
+          </div>
+        </div>
+
+        {/* Emergency kill-switch — deliberately visible and unambiguous.
+            The button style hardens (fill, not outline) so a frozen
+            agent's page carries a clear "recovery" affordance. */}
+        <KillSwitch
+          status={data.status}
+          onFreeze={async () => {
+            await apiPost(`/api/agents/${id}/freeze`, { actor: 'dashboard' });
+            await refetch();
+          }}
+          onUnfreeze={async () => {
+            await apiPost(`/api/agents/${id}/unfreeze`, { actor: 'dashboard' });
+            await refetch();
+          }}
+        />
+      </header>
+
+      {data.status === 'frozen' && (
+        <div className="rounded-xl border border-danger/40 bg-danger/5 p-4 flex items-start gap-3">
+          <span aria-hidden className="h-2 w-2 rounded-full bg-danger mt-1.5 flex-none" />
+          <div className="flex-1">
+            <div className="text-danger font-medium text-sm">
+              Agent is frozen
+            </div>
+            <div className="text-2xs text-text-2 mt-0.5 leading-relaxed">
+              Every x402 request from this agent is refused before the payment
+              handshake reaches the resource server. Unfreeze to resume.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── policy enforcement panel ────────────────────────── */}
+      <section className="card p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="sec-label">Policy enforcement</div>
+          <span className="text-2xs font-mono text-muted uppercase tracking-widest">
+            enforced on chain
+          </span>
+        </div>
+
+        <div className="grid md:grid-cols-4 gap-6">
+          <PolicyCell
+            label="Daily cap"
+            main={fmtUsdc(data.policy?.dailyCapMicroUsdc ?? 0)}
+            sub={`spent ${fmtUsdc(data.spend.dailySpentMicroUsdc)}`}
+            progress={{
+              value: data.spend.dailySpentMicroUsdc,
+              max: data.policy?.dailyCapMicroUsdc ?? 0,
+            }}
+          />
+          <PolicyCell
+            label="Monthly cap"
+            main={fmtUsdc(data.policy?.monthlyCapMicroUsdc ?? 0)}
+            sub={`spent ${fmtUsdc(data.spend.monthlySpentMicroUsdc)}`}
+            progress={{
+              value: data.spend.monthlySpentMicroUsdc,
+              max: data.policy?.monthlyCapMicroUsdc ?? 0,
+            }}
+          />
+          <PolicyCell
+            label="Human approval"
+            main={`≥ ${fmtUsdc(data.policy?.humanThresholdMicroUsdc ?? 0)}`}
+            sub="per request"
+          />
+          <PolicyCell
+            label="Risk threshold"
+            main={String(data.policy?.riskThreshold ?? '—')}
+            sub="escalate on higher"
+          />
+        </div>
+
+        <div className="rule" />
+
+        <div>
+          <div className="sec-label mb-2">Allowed routes</div>
+          {allowedRoutes.length === 0 ? (
+            <div className="text-2xs text-muted">
+              No routes allow-listed — every request will be refused.
+            </div>
           ) : (
-            <button
-              onClick={async () => {
-                await apiPost(`/api/agents/${id}/unfreeze`, {});
-                await refetch();
-              }}
-              className="px-3 py-1 text-sm border border-accent text-accent rounded hover:bg-accent/10"
-            >
-              Unfreeze
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {allowedRoutes.map((r) => (
+                <span
+                  key={r}
+                  className="pill border-ok/30 text-ok bg-ok/5 font-mono normal-case tracking-normal"
+                >
+                  {r}
+                </span>
+              ))}
+            </div>
           )}
         </div>
-      </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <StatBox
-          label="Daily cap"
-          main={fmtUsdc(data.policy?.dailyCapMicroUsdc ?? 0)}
-          sub={`spent ${fmtUsdc(data.spend.dailySpentMicroUsdc)}`}
-        />
-        <StatBox
-          label="Monthly cap"
-          main={fmtUsdc(data.policy?.monthlyCapMicroUsdc ?? 0)}
-          sub={`spent ${fmtUsdc(data.spend.monthlySpentMicroUsdc)}`}
-        />
-        <StatBox
-          label="Escalation ≥"
-          main={fmtUsdc(data.policy?.humanThresholdMicroUsdc ?? 0)}
-          sub={`risk threshold ${data.policy?.riskThreshold ?? '—'}`}
-        />
-      </div>
-
-      <div className="card p-6">
-        <h2 className="text-sm uppercase text-muted tracking-wide mb-3">Allowed routes</h2>
-        {(data.policy?.allowedRoutes ?? []).length === 0 ? (
-          <Empty>No routes allow-listed for this agent.</Empty>
-        ) : (
-          <ul className="flex flex-wrap gap-2">
-            {(data.policy?.allowedRoutes ?? []).map((r) => (
-              <li key={r}>
-                <Pill tone="accent">
-                  <span className="font-mono">{r}</span>
-                </Pill>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="p-4 border-b border-border text-sm uppercase text-muted tracking-wide">
-          Recent activity
+        <div className="flex items-center justify-between pt-2">
+          <div className="text-2xs font-mono text-muted">
+            Remaining today · <span className="text-text-2">{fmtUsdc(dailyRemaining)}</span>
+          </div>
+          <a
+            href="/policies"
+            className="text-2xs font-mono text-accent uppercase tracking-widest hover:underline underline-offset-2"
+          >
+            Edit policy →
+          </a>
         </div>
+      </section>
+
+      {/* ── policy simulator ────────────────────────────────── */}
+      {allowedRoutes.length > 0 && (
+        <PolicyEvaluation agentId={id} availableRoutes={allowedRoutes} />
+      )}
+
+      {/* ── behavior timeline ───────────────────────────────── */}
+      <AgentTimeline agentId={id} />
+
+      {/* ── recent activity ─────────────────────────────────── */}
+      <section className="card overflow-hidden">
+        <header className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <div className="sec-label">Recent activity</div>
+            <div className="text-[13px] text-text mt-0.5">Last {data.transactions.length} requests seen by policy</div>
+          </div>
+          <a
+            href="/audit"
+            className="text-2xs font-mono uppercase tracking-widest text-accent hover:underline underline-offset-2"
+          >
+            Full audit →
+          </a>
+        </header>
+
         {data.transactions.length === 0 ? (
-          <Empty>No traffic yet.</Empty>
+          <div className="p-6"><Empty>No traffic yet.</Empty></div>
         ) : (
-          <table className="w-full text-sm">
-            <tbody>
-              {data.transactions.map((t) => (
-                <tr key={t.id} className="border-t border-border">
-                  <td className="p-3 text-xs text-muted whitespace-nowrap">
-                    {relTime(t.createdAt)}
-                  </td>
-                  <td className="p-3">
-                    <StatusPill status={t.status} />
-                  </td>
-                  <td className="p-3 font-mono text-xs">{t.route}</td>
-                  <td className="p-3 font-mono">{fmtUsdc(t.amountMicroUsdc)}</td>
-                  <td className="p-3 text-xs">
-                    {t.riskScore != null ? `risk ${t.riskScore}` : ''}
-                  </td>
-                  <td className="p-3 text-xs text-muted">{t.riskReason ?? ''}</td>
-                  <td className="p-3 text-xs">
-                    {t.algoTxnId && (
-                      <a
-                        className="text-accent hover:underline"
-                        href={`https://lora.algokit.io/testnet/tx/${t.algoTxnId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        tx ↗
-                      </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>
+            {data.transactions.slice(0, 20).map((t) => (
+              <ActivityRow
+                key={t.id}
+                tx={{ ...t, agentName: data.name, agentAddress: data.algoAddress }}
+                compact
+              />
+            ))}
+          </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-function StatBox({ label, main, sub }: { label: string; main: string; sub: string }) {
+function KillSwitch({
+  status,
+  onFreeze,
+  onUnfreeze,
+}: {
+  status: 'active' | 'frozen';
+  onFreeze: () => Promise<void>;
+  onUnfreeze: () => Promise<void>;
+}) {
+  if (status === 'frozen') {
+    return (
+      <button
+        onClick={onUnfreeze}
+        className="btn btn-ok"
+        title="Resume x402 payments from this agent"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+        Unfreeze agent
+      </button>
+    );
+  }
   return (
-    <div className="card p-5">
-      <div className="text-xs uppercase text-muted">{label}</div>
-      <div className="text-2xl font-mono mt-1">{main}</div>
-      <div className="text-xs text-muted mt-1">{sub}</div>
+    <button
+      onClick={async () => {
+        if (typeof window !== 'undefined' && !window.confirm(
+          'Freeze this agent? Every x402 request will be refused until unfrozen.'
+        )) return;
+        await onFreeze();
+      }}
+      className="btn btn-danger"
+      title="Emergency stop — refuse all future x402 requests from this agent"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+      Emergency freeze
+    </button>
+  );
+}
+
+function PolicyCell({
+  label,
+  main,
+  sub,
+  progress,
+}: {
+  label: string;
+  main: string;
+  sub: string;
+  progress?: { value: number; max: number };
+}) {
+  return (
+    <div>
+      <div className="sec-label">{label}</div>
+      <div className="mt-1 text-xl font-semibold num tracking-tightest text-text">{main}</div>
+      <div className="text-2xs text-muted mt-0.5">{sub}</div>
+      {progress && progress.max > 0 && (
+        <div className="mt-2.5">
+          <Progress value={progress.value} max={progress.max} />
+        </div>
+      )}
     </div>
   );
 }

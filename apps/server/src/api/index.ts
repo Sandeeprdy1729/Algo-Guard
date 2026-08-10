@@ -7,6 +7,7 @@ import { agentsRouter } from './agents';
 import { policiesRouter } from './policies';
 import { auditRouter } from './audit';
 import { approvalsRouter } from './approvals';
+import { slackRouter } from './slack';
 import { subscribe } from './stream';
 
 export function mountDashboardApi(app: Hono<any>) {
@@ -14,6 +15,7 @@ export function mountDashboardApi(app: Hono<any>) {
   app.route('/api/policies', policiesRouter);
   app.route('/api/audit', auditRouter);
   app.route('/api/approvals', approvalsRouter);
+  app.route('/api/slack', slackRouter);
 
   app.get('/api/stream', (c) => {
     return new Response(subscribe(), {

@@ -73,6 +73,16 @@ export const approvalsRepo = {
     return rows.map(serialize);
   },
 
+  async listByAgent(agentId: string, limit = 100, db: PrismaClient = prisma) {
+    const rows = await db.approval.findMany({
+      where: { transaction: { agentId } },
+      include: { transaction: { include: { agent: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(200, limit),
+    });
+    return rows.map(serialize);
+  },
+
   async decide(
     id: string,
     decision: 'approved' | 'denied',
@@ -89,6 +99,22 @@ export const approvalsRepo = {
         decidedAt: new Date(),
       },
       include: { transaction: true },
+    });
+  },
+
+  /**
+   * Save the Slack message coordinates so we can edit the same message
+   * when the decision comes in. Best-effort — never throws.
+   */
+  async attachSlackMessage(
+    id: string,
+    channelId: string,
+    messageTs: string,
+    db: PrismaClient = prisma
+  ) {
+    return db.approval.update({
+      where: { id },
+      data: { slackChannelId: channelId, slackMessageTs: messageTs },
     });
   },
 

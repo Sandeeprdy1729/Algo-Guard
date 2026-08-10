@@ -9,7 +9,7 @@ let nextId = 1;
 const encoder = new TextEncoder();
 
 export interface Event {
-  type: 'transaction' | 'approval' | 'policy' | 'audit' | 'ping';
+  type: 'transaction' | 'approval' | 'policy' | 'audit' | 'agent' | 'security' | 'ping';
   data: unknown;
 }
 

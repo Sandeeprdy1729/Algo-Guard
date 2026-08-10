@@ -1,24 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+export const dynamic = 'force-dynamic';
+
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ApiError, apiPost, fmtUsdc, shortAddr } from '@/lib/api';
 import { useFetch } from '@/lib/swr';
-import { Empty, ErrorBanner, Loading, StatusPill } from '@/components/ui';
+import { Empty, ErrorBanner, Loading, Progress, StatusPill } from '@/components/ui';
 
 interface Agent {
   id: string;
   name: string;
   algoAddress: string;
-  status: string;
+  status: 'active' | 'frozen';
   policy: null | {
     dailyCapMicroUsdc: number;
+    monthlyCapMicroUsdc: number;
     humanThresholdMicroUsdc: number;
     allowedRoutes: string[];
   };
   spend: { dailySpentMicroUsdc: number };
 }
-
 interface AgentsResponse {
   agents: Agent[];
   availableRoutes: string[];
@@ -35,6 +37,7 @@ export default function AgentsPage() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
 
   const canSubmit =
     form.name.trim().length > 0 &&
@@ -43,126 +46,148 @@ export default function AgentsPage() {
     form.userEmail.includes('@');
 
   const submit = async () => {
-    setBusy(true);
-    setFormError(null);
-    setNotice(null);
+    setBusy(true); setFormError(null); setNotice(null);
     try {
       await apiPost('/api/agents', form);
       setNotice(`Registered "${form.name}" (${shortAddr(form.algoAddress)})`);
       setForm((f) => ({ ...f, name: '', algoAddress: '' }));
+      setShowForm(false);
       await refetch();
     } catch (err) {
       setFormError(err instanceof ApiError ? err : new ApiError(String(err), { status: 0 }));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
+
+  const total = data?.agents.length ?? 0;
+  const active = useMemo(() => data?.agents.filter((a) => a.status === 'active').length ?? 0, [data]);
+  const frozen = total - active;
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
-
-      <div className="card p-6 space-y-4">
-        <h2 className="text-sm uppercase text-muted tracking-wide">Register a new agent</h2>
-        <div className="grid grid-cols-4 gap-3">
-          {(['name', 'algoAddress', 'adminAddress', 'userEmail'] as const).map((k) => (
-            <label key={k} className="text-xs text-muted uppercase tracking-wide">
-              {k}
-              <input
-                value={(form as any)[k]}
-                onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
-                placeholder={
-                  k === 'algoAddress'
-                    ? '58-char TestNet address'
-                    : k === 'adminAddress'
-                      ? 'admin 58-char'
-                      : k
-                }
-                className="mt-1 w-full bg-bg border border-border rounded px-3 py-2 text-sm font-mono normal-case text-text"
-              />
-            </label>
-          ))}
-        </div>
-        {form.algoAddress.length > 0 && form.algoAddress.length !== 58 && (
-          <div className="text-xs text-warn">algoAddress must be 58 characters ({form.algoAddress.length}/58)</div>
-        )}
-        <div className="flex items-center gap-3">
-          <button
-            disabled={busy || !canSubmit}
-            onClick={submit}
-            className="px-4 py-2 bg-accent text-bg font-medium rounded disabled:opacity-40"
-          >
-            {busy ? 'Registering…' : 'Register agent'}
-          </button>
-          {notice && <span className="text-xs text-accent">{notice}</span>}
-        </div>
-        {formError && (
-          <ErrorBanner
-            title="Registration failed"
-            detail={formError.message}
-            requestId={formError.requestId}
-          />
-        )}
-        {data && (
-          <p className="text-xs text-muted">
-            Available routes: <span className="font-mono">{data.availableRoutes.join(', ')}</span>
+      <header className="flex items-end justify-between gap-4">
+        <div>
+          <div className="sec-label">Registered fleet</div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tightest text-text">Agents</h1>
+          <p className="mt-1 text-sm text-text-2">
+            Every account under AgentGuard policy — {total} total, {active} active
+            {frozen > 0 && `, ${frozen} frozen`}.
           </p>
-        )}
-      </div>
+        </div>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className={showForm ? 'btn btn-ghost' : 'btn btn-primary'}
+        >
+          {showForm ? 'Cancel' : '+ Register agent'}
+        </button>
+      </header>
 
-      {error && (
-        <ErrorBanner
-          title="Could not load agents"
-          detail={error.message}
-          requestId={error.requestId}
-          onRetry={refetch}
-        />
+      {notice && (
+        <div className="rounded-lg border border-ok/40 bg-ok/5 px-4 py-2.5 text-sm text-ok flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+          {notice}
+        </div>
       )}
-      {loading && <Loading label="Loading agents…" />}
+
+      {showForm && (
+        <div className="card p-6 space-y-4">
+          <div className="sec-label">Register a new agent</div>
+          <div className="grid md:grid-cols-4 gap-3">
+            {(['name', 'algoAddress', 'adminAddress', 'userEmail'] as const).map((k) => (
+              <label key={k} className="block">
+                <span className="sec-label">{k}</span>
+                <input
+                  value={form[k]}
+                  onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                  placeholder={
+                    k === 'algoAddress' ? '58-char TestNet address' :
+                    k === 'adminAddress' ? '58-char admin address' :
+                    k === 'userEmail' ? 'you@example.com' : 'Human-readable name'
+                  }
+                  className="mt-1 w-full bg-bg border border-border rounded-md px-3 py-2 text-sm font-mono
+                             text-text placeholder:text-dim focus:outline-none focus:border-accent
+                             transition-colors duration-150"
+                />
+              </label>
+            ))}
+          </div>
+          {form.algoAddress.length > 0 && form.algoAddress.length !== 58 && (
+            <div className="text-2xs font-mono text-warn">
+              algoAddress must be 58 characters ({form.algoAddress.length}/58)
+            </div>
+          )}
+          <div className="flex items-center gap-3 pt-2">
+            <button disabled={busy || !canSubmit} onClick={submit} className="btn btn-primary">
+              {busy ? 'Registering…' : 'Register agent'}
+            </button>
+            {formError && (
+              <div className="text-2xs text-danger font-mono">{formError.message}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {error && <ErrorBanner title="Could not load agents" detail={error.message} requestId={error.requestId} onRetry={refetch} />}
+      {loading && <Loading label="Loading agents" />}
       {data && (
-        <div className="card">
-          {data.agents.length === 0 ? (
-            <Empty>No agents yet. Register one above to start seeing policy activity.</Empty>
-          ) : (
+        data.agents.length === 0 ? (
+          <Empty>No agents yet. Register one above to start seeing policy activity.</Empty>
+        ) : (
+          <div className="card overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="text-left text-muted text-xs uppercase tracking-wide">
-                <tr>
-                  <th className="p-4">Name</th>
-                  <th className="p-4">Address</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4">Daily / cap</th>
-                  <th className="p-4">Escalation ≥</th>
-                  <th className="p-4">Routes</th>
+              <thead>
+                <tr className="text-left">
+                  <th className="sec-label px-5 py-3 font-normal">Agent</th>
+                  <th className="sec-label px-5 py-3 font-normal">Status</th>
+                  <th className="sec-label px-5 py-3 font-normal text-right">Daily spend</th>
+                  <th className="sec-label px-5 py-3 font-normal text-right">Escalate ≥</th>
+                  <th className="sec-label px-5 py-3 font-normal">Routes</th>
                 </tr>
               </thead>
               <tbody>
                 {data.agents.map((a) => (
-                  <tr key={a.id} className="border-t border-border">
-                    <td className="p-4">
-                      <Link href={`/agents/${a.id}`} className="text-accent hover:underline">
-                        {a.name}
+                  <tr key={a.id} className="border-t border-border hover:bg-surface-2/60 transition-colors duration-150 group">
+                    <td className="px-5 py-4">
+                      <Link href={`/agents/${a.id}`} className="block group-hover:text-accent transition-colors">
+                        <div className="text-text text-[13px] font-medium">{a.name}</div>
+                        <div className="text-2xs font-mono text-muted mt-0.5">{shortAddr(a.algoAddress)}</div>
                       </Link>
                     </td>
-                    <td className="p-4 font-mono text-xs">{shortAddr(a.algoAddress)}</td>
-                    <td className="p-4">
+                    <td className="px-5 py-4">
                       <StatusPill status={a.status} />
                     </td>
-                    <td className="p-4 font-mono">
-                      {fmtUsdc(a.spend.dailySpentMicroUsdc)} /{' '}
-                      {a.policy ? fmtUsdc(a.policy.dailyCapMicroUsdc) : '—'}
+                    <td className="px-5 py-4 text-right w-64">
+                      <div className="text-[13px] num text-text-2">
+                        {fmtUsdc(a.spend.dailySpentMicroUsdc)}
+                        <span className="text-muted mx-1.5">/</span>
+                        {a.policy ? fmtUsdc(a.policy.dailyCapMicroUsdc) : '—'}
+                      </div>
+                      {a.policy && (
+                        <div className="mt-1.5">
+                          <Progress
+                            value={a.spend.dailySpentMicroUsdc}
+                            max={a.policy.dailyCapMicroUsdc}
+                          />
+                        </div>
+                      )}
                     </td>
-                    <td className="p-4 font-mono">
+                    <td className="px-5 py-4 text-right text-[13px] num text-text-2">
                       {a.policy ? fmtUsdc(a.policy.humanThresholdMicroUsdc) : '—'}
                     </td>
-                    <td className="p-4 text-xs text-muted font-mono">
-                      {a.policy?.allowedRoutes.join(', ') ?? '—'}
+                    <td className="px-5 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {(a.policy?.allowedRoutes ?? []).map((r) => (
+                          <span key={r} className="pill border-border/70 text-text-2 font-mono normal-case tracking-normal">
+                            {r}
+                          </span>
+                        ))}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
+          </div>
+        )
       )}
     </div>
   );

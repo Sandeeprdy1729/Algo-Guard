@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import { approvalsRepo } from '../repos';
-import { emit } from './stream';
-import { invalidateSpendWindow } from '../policy/spend';
-import { badRequest, notFound } from '../lib/errors';
+import { notFound } from '../lib/errors';
+import { decideApproval } from '../services/approvals';
+import type { Env } from '../types';
 
-export const approvalsRouter = new Hono();
+export const approvalsRouter = new Hono<Env>();
 
 approvalsRouter.get('/', async (c) => {
   const status = (c.req.query('status') ?? 'pending') as
@@ -28,25 +28,18 @@ approvalsRouter.post('/:id/decision', async (c) => {
     approverAddress?: string;
     approvalTxnId?: string;
   };
-  if (body.decision !== 'approved' && body.decision !== 'denied') {
-    throw badRequest('decision must be "approved" or "denied"');
-  }
-  const approval = await approvalsRepo.decide(
-    c.req.param('id'),
-    body.decision,
-    body.approverAddress ?? null,
-    body.approvalTxnId ?? null
-  );
-  invalidateSpendWindow(approval.transaction.agentId);
-  emit({
-    type: 'approval',
-    data: {
-      id: approval.id,
-      status: approval.status,
-      transactionId: approval.transactionId,
-      approvalTxnId: approval.approvalTxnId,
-      decidedAt: approval.decidedAt?.toISOString() ?? null,
-    },
+  const result = await decideApproval(c.req.param('id'), body.decision as any, {
+    source: 'dashboard',
+    approverAddress: body.approverAddress ?? null,
+    approvalTxnId: body.approvalTxnId ?? null,
+    requestId: c.get('request')?.requestId,
   });
-  return c.json({ ok: true, status: approval.status });
+  if (result.status === 'noop') {
+    return c.json({
+      ok: false,
+      status: result.approval?.status ?? 'unknown',
+      reason: result.reason,
+    });
+  }
+  return c.json({ ok: true, status: result.approval.status });
 });

@@ -42,6 +42,11 @@ AgentGuard sits between the agent and the paid endpoint. Every request runs thro
 | 📺 **Real-time dashboard** | Next.js + Tailwind + SSE — overview, agent detail, policy editor, approvals queue, full audit table |
 | 🗄️ **Supabase persistence** | Read-index over the chain via Prisma; the chain is truth, the DB is the query layer |
 | 🔐 **Pera Universal Wallet support** | BIP-39 24-word via ARC-52 Peikert derivation, cross-verified against the legacy 25-word Algorand format |
+| 🛑 **Emergency kill switch** | Freeze / unfreeze an agent from dashboard, Slack, or MCP — one shared service, idempotent, invalidates the spend cache instantly |
+| 🧩 **Rule-trace policy engine** | Every decision returns the full rule set — matched, unmatched, and info bands — so operators can see *why*, not just *what* |
+| 🔍 **Policy simulator** | "What would the engine decide right now?" — POST a route + amount + risk score to `/api/policies/simulate` and get the same decision the middleware would emit |
+| 🕰️ **Agent behavior timeline** | Merged chronological feed per agent: transactions · approvals · freeze/unfreeze · policy edits — one query, three sources, indexed by `(agentId, createdAt)` |
+| 🤖 **MCP server** | Expose AgentGuard to any MCP-capable AI runtime (Claude Desktop, Cursor). Read-only reads plus write actions that go through the SAME service layer as the dashboard — no policy bypass |
 
 ## Architecture
 
@@ -103,9 +108,10 @@ sequenceDiagram
 agentguard/
 ├── apps/
 │   ├── server/         Hono x402 resource server + policy engine + admin API
-│   ├── dashboard/      Next.js admin dashboard (SSE, Tailwind)
+│   ├── dashboard/      Next.js admin dashboard (SSE, Tailwind, light/dark)
 │   ├── ai-service/     FastAPI risk scorer (Groq)
-│   └── demo-agent/     Scripted x402 client — happy / risky / escalate scenarios
+│   ├── demo-agent/     Scripted x402 client — happy / risky / escalate scenarios
+│   └── mcp-server/     Model Context Protocol server (stdio) — thin HTTP client
 ├── contracts/          PyTeal policy contract + AlgoKit-style deploy helpers
 └── packages/
     └── policy-sdk/     Reusable @agentguard/policy-sdk (x402-aware fetch)
@@ -157,8 +163,11 @@ cd apps/server      && node_modules/.bin/tsc --noEmit
 cd apps/dashboard   && node_modules/.bin/tsc --noEmit
 cd apps/demo-agent  && node_modules/.bin/tsc --noEmit
 
-# Policy engine (pure, no I/O)
-cd apps/server && node_modules/.bin/tsx --test src/policy/engine.test.ts       # 9/9
+# Policy engine (pure, no I/O) — both evaluate() and the new trace() shape
+cd apps/server && node_modules/.bin/tsx --test src/policy/engine.test.ts       # 14/14
+
+# Slack lib + endpoint (signature verify, block-kit, decision path)
+cd apps/server && node_modules/.bin/tsx --test src/lib/slack.test.ts src/api/slack.test.ts   # 23/23
 
 # Full server integration (real Supabase, mocked facilitator)
 cd apps/server && node_modules/.bin/tsx --test src/app.test.ts                 # 13/13
@@ -205,8 +214,102 @@ Full step-by-step deployment guide (screenshots + gotchas) available on request 
 | `AGENT_MNEMONIC` | demo-agent | Wallet the demo agent signs x402 payments with |
 | `ACCOUNT_INDEX` | contracts + demo-agent | HD account index for BIP-39 wallets (default 0) |
 | `AGENTGUARD_SERVER` | dashboard | Backend URL for the API proxy (default `http://localhost:4021`) |
+| `SLACK_BOT_TOKEN` | server | Optional. Bot token for the Slack app. Enables Slack notifications only when all three `SLACK_*` vars are set. |
+| `SLACK_SIGNING_SECRET` | server | Optional. Used to verify Slack's interactive callback signature. |
+| `SLACK_APPROVAL_CHANNEL_ID` | server | Optional. Channel the approval message is posted into. |
 
+## Slack Approvals (optional)
 
+Approvals surface in a Slack channel as an interactive message. Clicking **Approve** or **Deny** in Slack takes the SAME code path the dashboard uses (`services/approvals.decideApproval`) — no duplicate business logic, idempotent on already-decided / expired intents.
+
+### Set-up (5 minutes)
+
+1. https://api.slack.com/apps → **Create New App** → *From scratch* → name it `AgentGuard` in your workspace.
+2. **OAuth & Permissions** → add the Bot scopes: `chat:write`, `chat:write.public`, `commands`.
+3. **Install App** → *Install to Workspace* → copy the **Bot User OAuth Token** (`xoxb-…`) into `SLACK_BOT_TOKEN`.
+4. **Basic Information** → *App Credentials* → copy the **Signing Secret** into `SLACK_SIGNING_SECRET`.
+5. In your workspace, right-click the channel that should receive approvals → *Copy link* → the channel id is the last path segment (`C…`). Set `SLACK_APPROVAL_CHANNEL_ID`. Invite the bot: `/invite @AgentGuard`.
+6. **Interactivity & Shortcuts** → toggle on → *Request URL* = `https://<your-public-host>/api/slack/actions`.
+
+For local dev, Slack cannot POST to `http://localhost:4021`. Use a tunnel:
+
+```bash
+# either
+ngrok http 4021
+# or
+cloudflared tunnel --url http://localhost:4021
+```
+
+Then set the tunnel's HTTPS URL as your Request URL. **Do NOT disable signature verification** as a shortcut — the server has no `NODE_ENV`-based bypass; the same code runs in dev and prod.
+
+### End-to-end demo
+
+1. Start AgentGuard: `.\demo.ps1`.
+2. Trigger an escalation: `.\beat3.ps1` — the agent asks for `$0.50 /gpu/render`, above the human threshold.
+3. Dashboard `/approvals` shows the pending card; **the same approval appears in the Slack channel** with Approve / Deny buttons.
+4. Click **Approve** in Slack. The message is edited in place to `:white_check_mark: APPROVED` and the buttons are removed.
+5. Dashboard flips Pending → Approved live via SSE.
+6. Agent retries automatically, x402 settles USDC on Algorand TestNet, `record_spend` fires, on-chain SPND event materialises on the audit page.
+
+If Slack is unreachable when the escalation fires, the dashboard flow is unaffected — Slack failure never blocks payment or approval creation.
+
+## MCP Server (optional)
+
+AgentGuard ships an MCP server (`apps/mcp-server`) so any Model Context Protocol client — Claude Desktop, Cursor, IDE assistants — can inspect agents, simulate policy decisions, and freeze / unfreeze from inside a chat.
+
+**Design invariant.** The MCP server is a *thin HTTP client*. It calls the same `/api/*` endpoints the dashboard uses; every write goes through `setAgentStatus` or `decideApproval`. It has no database access, no keys, no policy shortcut. If the engine changes, the MCP output changes for free.
+
+### Tools
+
+| Tool | Type | What it does |
+|---|---|---|
+| `list_agents` | read | List all agents + status + daily spend |
+| `get_agent` | read | Full agent detail + last 50 transactions |
+| `get_timeline` | read | Merged behavior feed (transactions · approvals · security) |
+| `simulate_policy` | read | Ask the engine what it WOULD decide (route + amount + risk) |
+| `freeze_agent` | write | Emergency kill-switch — idempotent |
+| `unfreeze_agent` | write | Resume payments — idempotent |
+| `decide_approval` | write | Approve or deny a pending escalation |
+
+### Claude Desktop config
+
+Add to your Claude Desktop `mcpServers` block (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+
+```json
+{
+  "mcpServers": {
+    "agentguard": {
+      "command": "npx",
+      "args": ["-y", "tsx", "D:/Hackathon/apps/mcp-server/src/index.ts"],
+      "env": {
+        "AGENTGUARD_URL": "http://localhost:4021"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The seven tools appear in the tool picker. `AGENTGUARD_URL` defaults to `http://localhost:8787` — override if your server runs elsewhere.
+
+## Policy Simulator + Behavior Timeline
+
+The agent-detail page now surfaces two additional panels driven by the same rule set the middleware evaluates at request time:
+
+- **Policy Evaluation** (`POST /api/policies/simulate/:agentId`) — pick a route, amount, and optional risk score; the panel renders the decision, the primary rule that fired, the projected spending bars, and every rule the engine considered (matched or not) with severity chips.
+- **Behavior Timeline** (`GET /api/agents/:id/timeline`) — chronological, filterable feed merging transactions · approvals · security events (freeze/unfreeze, policy updates). One query on the server, three sources, indexed by `(agentId, createdAt)`.
+
+Both panels stream from the same `evaluate()` code the runtime uses — there is no separate simulator engine and no way to make the simulator disagree with production.
+
+## Emergency Kill Switch
+
+The agent-detail page has a red **Emergency freeze** button. Every path — dashboard, Slack, MCP — routes through the shared `setAgentStatus` service, which:
+
+- refuses double-freezes (idempotent no-op),
+- writes exactly one `SecurityEvent` row per real transition,
+- invalidates the agent's in-process spend cache immediately,
+- emits a live SSE tick so every open dashboard tab reflects the change.
+
+Once frozen, the policy middleware refuses every x402 request from that agent *before* the payment handshake reaches the resource server. No signature is wasted.
 
 ## The Demo (3 Beats, ~3 minutes)
 

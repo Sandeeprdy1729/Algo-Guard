@@ -1,0 +1,25 @@
+{
+  "name": "@agentguard/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentGuard MCP server — exposes the policy engine to any MCP-capable AI runtime (Claude Desktop, Cursor, IDEs)",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "agentguard-mcp": "src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.6.3"
+  }
+}

@@ -62,3 +62,64 @@ export type EvaluationVerdict =
   | { action: 'allow'; reason: null }
   | { action: 'block'; code: 'FROZEN' | 'ROUTE_DISALLOWED' | 'DAILY_CAP' | 'MONTHLY_CAP' | 'RISK'; reason: string }
   | { action: 'escalate'; code: 'HUMAN_THRESHOLD' | 'RISK_ESCALATION'; reason: string };
+
+/**
+ * Human-readable ruleset — every rule the engine considered, whether or
+ * not it fired. Used by the dashboard "Policy Evaluation" viz and by
+ * MCP clients that need to understand WHY a request was allowed / blocked
+ * / escalated. `matched` = true means this rule contributed to the
+ * decision; the FIRST matched rule (by precedence) is the primary one.
+ */
+export type RuleId =
+  | 'agent_frozen'
+  | 'route_allowlist'
+  | 'daily_cap'
+  | 'monthly_cap'
+  | 'risk_critical'
+  | 'human_threshold'
+  | 'risk_escalation'
+  | 'daily_warning';
+
+export type RuleSeverity = 'info' | 'warn' | 'escalate' | 'block';
+
+export interface RuleTrace {
+  id: RuleId;
+  label: string;
+  matched: boolean;
+  severity: RuleSeverity;
+  detail: string;
+}
+
+export interface SpendingState {
+  dailySpentMicroUsdc: number;
+  dailyCapMicroUsdc: number;
+  monthlySpentMicroUsdc: number;
+  monthlyCapMicroUsdc: number;
+  remainingDailyMicroUsdc: number;
+  remainingMonthlyMicroUsdc: number;
+  amountMicroUsdc: number;
+  projectedDailyUtilPct: number;   // (spent + amount) / cap * 100
+}
+
+/**
+ * Verbose evaluation used by the /simulate endpoint + MCP + dashboard.
+ * `decision` mirrors `action` in UPPERCASE for external stability.
+ */
+export interface EvaluationTrace {
+  decision: 'ALLOW' | 'BLOCK' | 'ESCALATE';
+  primaryCode:
+    | 'ALLOW'
+    | 'FROZEN'
+    | 'ROUTE_DISALLOWED'
+    | 'DAILY_CAP'
+    | 'MONTHLY_CAP'
+    | 'RISK'
+    | 'HUMAN_THRESHOLD'
+    | 'RISK_ESCALATION';
+  reason: string | null;
+  routeAllowed: boolean;
+  riskScore: number | null;
+  riskThreshold: number;
+  spendingState: SpendingState;
+  rules: RuleTrace[];
+}

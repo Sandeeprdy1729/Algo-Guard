@@ -23,16 +23,17 @@ model User {
 }
 
 model Agent {
-  id           String        @id @default(uuid()) @db.Uuid
-  userId       String        @db.Uuid
-  name         String
-  algoAddress  String        @unique
-  status       AgentStatus   @default(active)
-  metadata     Json?
-  createdAt    DateTime      @default(now())
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  policy       Policy?
-  transactions Transaction[]
+  id             String          @id @default(uuid()) @db.Uuid
+  userId         String          @db.Uuid
+  name           String
+  algoAddress    String          @unique
+  status         AgentStatus     @default(active)
+  metadata       Json?
+  createdAt      DateTime        @default(now())
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy         Policy?
+  transactions   Transaction[]
+  securityEvents SecurityEvent[]
 
   @@index([userId])
 }
@@ -94,6 +95,10 @@ model Approval {
   expiresAt       DateTime
   decidedAt       DateTime?
   createdAt       DateTime       @default(now())
+  // Optional: set only when Slack notification succeeded, so we can
+  // update the same Slack message when the decision lands.
+  slackChannelId  String?
+  slackMessageTs  String?
   transaction     Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 }
 
@@ -114,4 +119,20 @@ model AuditLog {
   createdAt     DateTime @default(now())
 
   @@index([agentAddress, createdAt(sort: Desc)])
+}
+
+// Admin actions that affect an agent's governance state — freezes,
+// unfreezes, policy commits, etc. Kept out of Transaction so the
+// existing enum + audit surface stays untouched.
+model SecurityEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  agentId   String   @db.Uuid
+  type      String   // "freeze" | "unfreeze" | "policy_updated" | ...
+  actor     String?  // e.g. "dashboard", "slack:@alice", "mcp:agent-x"
+  reason    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt(sort: Desc)])
 }

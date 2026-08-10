@@ -5,7 +5,9 @@ version: '3.9'
 #
 # Requires:
 #   - apps/server/.env with DATABASE_URL pointing to your Supabase pooler,
-#     AVM_ADDRESS, POLICY_APP_ID/ADDRESS, ADMIN_MNEMONIC, GROQ_API_KEY
+#     AVM_ADDRESS, POLICY_APP_ID/ADDRESS, ADMIN_MNEMONIC, GROQ_API_KEY.
+#     Optional: SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET + SLACK_APPROVAL_CHANNEL_ID
+#     to enable Slack approvals (see README "Slack Approvals" section).
 #   - apps/ai-service/.env with GROQ_API_KEY (and optionally GROQ_MODEL)
 
 services:

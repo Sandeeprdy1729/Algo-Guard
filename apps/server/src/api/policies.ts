@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
-import { agentsRepo, policiesRepo } from '../repos';
+import { agentsRepo, policiesRepo, securityEventsRepo } from '../repos';
 import { parsePolicy, diffPolicies } from '../policy/nl-parser';
-import { PolicySchema } from '../policy/schema';
-import { allProtectedRoutes } from '../middleware/pricing';
-import { invalidateSpendWindow } from '../policy/spend';
+import { PolicySchema, type Policy, type SpendWindow } from '../policy/schema';
+import { trace as evaluatePolicyVerbose } from '../policy/engine';
+import { allProtectedRoutes, priceForRoute, routeKey } from '../middleware/pricing';
+import { getSpendWindow, invalidateSpendWindow } from '../policy/spend';
 import { emit } from './stream';
 import { badRequest, notFound } from '../lib/errors';
 
@@ -53,6 +54,87 @@ policiesRouter.post('/from-text/:agentId', async (c) => {
 });
 
 /**
+ * POST /api/policies/simulate/:agentId
+ *
+ * "What would the engine do if this request came in NOW?"
+ * Powers the dashboard Policy Evaluation visualiser. Also used by
+ * MCP clients to preview a spend decision without submitting one.
+ *
+ * Body:
+ *   {
+ *     route:        "POST /llm/summarize" | "GET /..."   (or method + path)
+ *     method?:      "POST" | "GET" | ...
+ *     path?:        "/llm/summarize"
+ *     amountMicroUsdc?: number,   // defaults to the route's real price
+ *     riskScore?:   number,       // override — otherwise omitted
+ *     riskReason?:  string,
+ *     policyOverride?: Partial<Policy>   // sandbox rule-tuning
+ *   }
+ *
+ * The engine call is PURE — no writes, no side effects, safe to call
+ * from anywhere. `spend` is read from the same cache the real
+ * middleware uses so the numbers match reality.
+ */
+policiesRouter.post('/simulate/:agentId', async (c) => {
+  const agentId = c.req.param('agentId');
+  const raw = await agentsRepo.findById(agentId);
+  if (!raw) throw notFound(`agent ${agentId} not found`);
+  if (!raw.policy) throw badRequest('agent has no policy — set one first');
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    route?: string;
+    method?: string;
+    path?: string;
+    amountMicroUsdc?: number;
+    riskScore?: number;
+    riskReason?: string;
+    policyOverride?: Partial<Policy>;
+  };
+
+  const route = body.route ?? (
+    body.method && body.path ? routeKey(body.method, body.path) : null
+  );
+  if (!route) throw badRequest('route (or method+path) required');
+
+  const defaultAmount = priceForRoute(route);
+  const amountMicroUsdc = body.amountMicroUsdc ?? defaultAmount ?? 0;
+
+  const basePolicy: Policy = {
+    agentAddress: raw.algoAddress,
+    dailyCapMicroUsdc: Number(raw.policy.dailyCapMicroUsdc),
+    monthlyCapMicroUsdc: Number(raw.policy.monthlyCapMicroUsdc),
+    humanThresholdMicroUsdc: Number(raw.policy.humanThresholdMicroUsdc),
+    allowedRoutes: raw.policy.allowedRoutes,
+    riskThreshold: raw.policy.riskThreshold,
+    frozen: raw.status === 'frozen',
+  };
+  const policy: Policy = { ...basePolicy, ...(body.policyOverride ?? {}) };
+
+  const spend: SpendWindow = await getSpendWindow(agentId);
+
+  const trace = evaluatePolicyVerbose({
+    policy,
+    route,
+    amountMicroUsdc,
+    spend,
+    riskScore: typeof body.riskScore === 'number' ? body.riskScore : undefined,
+    riskReason: body.riskReason,
+  });
+
+  return c.json({
+    agent: { id: raw.id, name: raw.name, address: raw.algoAddress, status: raw.status },
+    input: {
+      route,
+      amountMicroUsdc,
+      riskScore: trace.riskScore,
+      riskReason: body.riskReason ?? null,
+      overrideApplied: !!body.policyOverride,
+    },
+    trace,
+  });
+});
+
+/**
  * POST /api/policies/:agentId/commit
  * Records the policy off-chain. In production the browser would first
  * post the signed on-chain txn ID and pass it here; the MVP accepts a
@@ -69,6 +151,19 @@ policiesRouter.post('/:agentId/commit', async (c) => {
 
   const policy = await policiesRepo.upsertFor(agentId, parsed, body.updatedTxnId ?? null);
   invalidateSpendWindow(agentId);
+
+  // Record for the agent's Behavior Timeline — best-effort, never
+  // blocks the commit path.
+  void securityEventsRepo
+    .create({
+      agentId,
+      type: 'policy_updated',
+      actor: 'dashboard',
+      reason: null,
+      metadata: { updatedTxnId: body.updatedTxnId ?? null },
+    })
+    .catch(() => {});
+
   emit({
     type: 'policy',
     data: {
