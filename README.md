@@ -332,6 +332,6 @@ MIT — see `LICENSE`.
 
 <div align="center">
 
-Built for the BlockHack x402 challenge · Algorand TestNet · [x402.org](https://x402.org) · [algorand.co](https://algorand.co)
+Built with ❤ for Smart India Hackathon · Algorand TestNet · [x402.org](https://x402.org) · [algorand.co](https://algorand.co)
 
 </div>
